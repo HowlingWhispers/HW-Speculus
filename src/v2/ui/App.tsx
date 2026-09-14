@@ -87,7 +87,6 @@ export function V2App() {
 
   const impersonate = async () => {
     if (!session || controller.current || importLock.current) return;
-    if (session.draft.trim() && !window.confirm('Replace the current player draft with an AI-generated impersonation of the player persona?')) return;
     const active = new AbortController();
     controller.current = active; setError(''); setRejected(null); setPhaseSeen([]);
     try {
