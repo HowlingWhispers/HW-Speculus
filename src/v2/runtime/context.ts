@@ -36,6 +36,7 @@ export function compileV2Context(
   const outputRules = [
     `The provider hard ceiling is ${outputEnvelope.hardLimitTokens} tokens. This is an emergency ceiling, never a target.`,
     `Aim to finish the complete turn by about ${outputEnvelope.targetTokens} tokens and leave roughly ${outputEnvelope.completionReserveTokens} tokens unused as a completion reserve.`,
+    'A non-empty roleplay response is required. Do not stop or emit end-of-sequence before producing the requested prose.',
     'Near the target, finish the current immediate beat and stop. Do not begin a new sentence, paragraph, action, or dialogue exchange merely because budget remains.',
     'Never trade a complete ending for extra description. Every opened quote, asterisk-delimited action, or bracketed inner voice must be closed before stopping.',
     'Ending naturally well below the hard ceiling is correct. Do not pad the response to consume the allowance.',
@@ -108,8 +109,12 @@ export function compileV2Context(
   }
 
   const influence = section('STYLE INFLUENCE / NOT STATE AUTHORITY', { tags: settings.tags, freeform: settings.freeform });
+  // Both normal rendering and player impersonation deliberately end on the same
+  // response anchor. The Orbis sentence-control bridge recognizes this marker and
+  // keeps its control text before the response boundary instead of appending it
+  // after the persona draft marker, which could leave NovelAI nothing to continue.
   const input = impersonatingPersona
-    ? section('OPERATOR REQUEST', `Draft only ${launch.persona.name}'s next player turn. Do not write the character or narrator.`) + '\n[PLAYER PERSONA DRAFT]\n'
+    ? section('OPERATOR REQUEST', `Draft only ${launch.persona.name}'s next player turn. Do not write the character or narrator.`) + '\n[IN-WORLD RESPONSE]\n'
     : skippingPersona
       ? section('OPERATOR TURN CONTROL', 'Player persona turn skipped. No player action, dialogue, thought or decision occurred in this turn.') + '\n[IN-WORLD RESPONSE]\n'
       : section('PLAYER INPUT / ATTEMPT OR UTTERANCE / NOT STATE AUTHORITY', player) + '\n[IN-WORLD RESPONSE]\n';
