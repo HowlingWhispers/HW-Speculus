@@ -13,8 +13,30 @@ const generationSchema = z.object({
   stopSequences: z.array(z.string().min(1).max(200)).max(16),
   continueToEndOfSentence: z.boolean(), reroll: z.boolean().optional(),
 });
+const resumeSaveSchema = z.object({
+  format: z.literal('speculus-v2-session'),
+  version: z.literal(2),
+  engine: z.literal('v2'),
+  source: z.object({
+    id: z.string().min(1).max(200),
+    type: z.string().min(1).max(40),
+    revision: z.string().min(1).max(200),
+  }).passthrough(),
+}).passthrough();
+const launchDepositSchema = z.object({
+  package: v2LaunchSchema,
+  resumeSave: resumeSaveSchema.optional(),
+}).superRefine((value, context) => {
+  if (!value.resumeSave) return;
+  const source = value.resumeSave.source;
+  const primary = value.package.primaryAsset;
+  if (source.id !== primary.id || source.type !== primary.type || source.revision !== primary.revision) {
+    context.addIssue({ code: 'custom', message: 'Resume save does not match the fresh V2 launch source revision.', path: ['resumeSave', 'source'] });
+  }
+});
 
 type V2Authorization = GenerationSession & { version: 2; model: string };
+type V2Deposit = z.infer<typeof launchDepositSchema>;
 const cookieName = (id: string) => `speculus_v2_${createHash('sha256').update(id).digest('hex').slice(0, 24)}`;
 const key = () => createHash('sha256').update(`speculus-v2-authorization:${process.env.SPECULUS_BRIDGE_SECRET}`).digest();
 
@@ -41,10 +63,10 @@ function authorization(request: Request, id: string): V2Authorization | null {
 
 export function createV2Router(options: { production?: boolean } = {}) {
   const router = Router();
-  const deposits = new Map<string, V2LaunchPackage>();
+  const deposits = new Map<string, V2Deposit>();
   router.use((_request, response, next) => {
     response.setHeader('Cache-Control', 'no-store');
-    for (const [code, value] of deposits) if (value.expiresAt <= Date.now()) deposits.delete(code);
+    for (const [code, value] of deposits) if (value.package.expiresAt <= Date.now()) deposits.delete(code);
     next();
   });
 
@@ -55,18 +77,23 @@ export function createV2Router(options: { production?: boolean } = {}) {
       if (!expected.length || expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
         return response.status(401).json({ error: 'Orbis bridge authorization failed.' });
       }
-      const value = v2LaunchSchema.parse(request.body);
+      // Backwards-compatible: plain launch packages are still accepted. New Orbis
+      // deployments may wrap the package with an authorization-free raw V2 save.
+      const parsed = request.body && typeof request.body === 'object' && 'package' in request.body
+        ? launchDepositSchema.parse(request.body)
+        : launchDepositSchema.parse({ package: request.body });
       const code = randomUUID();
-      deposits.set(code, value);
+      deposits.set(code, parsed);
       const origin = (process.env.SPECULUS_PUBLIC_ORIGIN || 'https://spec.thehowlingwhispers.com').replace(/\/$/, '');
-      response.status(201).json({ launchUrl: `${origin}/v2?launch=${encodeURIComponent(code)}`, expiresAt: value.expiresAt });
+      response.status(201).json({ launchUrl: `${origin}/v2?launch=${encodeURIComponent(code)}`, expiresAt: parsed.package.expiresAt });
     } catch (error) { next(error); }
   });
 
   router.get('/launch/:code', (request, response) => {
-    const value = deposits.get(String(request.params.code));
-    if (!value) return response.status(404).json({ error: 'V2 package is missing, expired, or already claimed. Launch again from Orbis.' });
+    const deposit = deposits.get(String(request.params.code));
+    if (!deposit) return response.status(404).json({ error: 'V2 package is missing, expired, or already claimed. Launch again from Orbis.' });
     deposits.delete(String(request.params.code));
+    const value: V2LaunchPackage = deposit.package;
     const session: V2Authorization = {
       version: 2, launchId: value.launchId, generationGrant: value.generationGrant, model: value.model,
       source: { id: value.primaryAsset.id, type: value.primaryAsset.type, revision: value.primaryAsset.revision },
@@ -74,7 +101,7 @@ export function createV2Router(options: { production?: boolean } = {}) {
     };
     const lifetime = Math.max(1, Math.floor((value.expiresAt - Date.now()) / 1000));
     response.setHeader('Set-Cookie', `${cookieName(value.launchId)}=${seal(session)}; HttpOnly; SameSite=Strict; Path=/api/v2; Max-Age=${lifetime}${options.production ? '; Secure' : ''}`);
-    response.json({ package: publicV2Package(value) });
+    response.json({ package: publicV2Package(value), ...(deposit.resumeSave ? { resumeSave: deposit.resumeSave } : {}) });
   });
 
   router.post('/generate', async (request, response, next) => {
