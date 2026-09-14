@@ -25,7 +25,7 @@ describe('V2 operator turn controls', () => {
     expect(next.turns[0].player).toBe(SKIPPED_PERSONA_TURN);
     expect(next.draft).toBe(value.draft);
     expect(next.events[0].label).toContain('persona skipped');
-    expect(phases).toEqual(['context', 'generate', 'validate', 'commit']);
+    expect(phases).toEqual(['resolve', 'context', 'generate', 'validate', 'commit']);
     const request = provider.generate.mock.calls[0] as unknown as [ProviderRequest];
     expect(request[0].prompt).toContain('Player persona turn skipped');
     expect(request[0].prompt).not.toContain(`[PLAYER INPUT]\n${SKIPPED_PERSONA_TURN}`);
