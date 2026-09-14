@@ -29,8 +29,13 @@ export const diagnosticsSchema = z.object({
   issues: z.array(z.string()), warnings: z.array(z.string()), model: z.string(), durationMs: z.number(),
   completionStatus: z.string(), worldRevision: z.number().int(),
   viewpointActorId: z.string().optional(), subjectActorId: z.string().nullable().optional(),
-  resolutionStatus: z.enum(['authoritative-noop', 'deferred']).optional(),
+  resolutionStatus: z.enum(['authoritative-noop', 'resolved', 'deferred']).optional(),
   resolutionDeferredClaims: z.array(z.string()).optional(),
+  resolutionElapsedSeconds: z.number().int().nonnegative().optional(),
+  resolutionCheck: z.object({
+    kind: z.literal('genesys-style'), successes: z.number().int(), advantages: z.number().int(),
+    triumph: z.boolean(), despair: z.boolean(), summary: z.string().max(500),
+  }).optional(),
   providerKind: z.string().optional(), providerEndpoint: z.string().optional(), requestId: z.string().optional(),
   finishReason: z.string().optional(), requestedMaxTokens: z.number().optional(), providerInputTokensEstimate: z.number().optional(),
   generationSettings: generationSettingsSchema.optional(),
@@ -69,5 +74,16 @@ export function operateWorld(session: V2Session, action: WorldAction, now = Date
 export function deleteLastTurn(session: V2Session): V2Session {
   const last = session.turns.at(-1);
   if (!last) return session;
-  return { ...session, turns: session.turns.slice(0, -1), events: session.events.filter((event) => event.id !== last.id) };
+  if (last.worldRevision !== session.world.revision) {
+    throw new Error('Delete latest requires unchanged world state after that turn. Undo later operator changes first.');
+  }
+  const resolutionId = `${last.id}:resolution`;
+  const remainingEvents = session.events.filter((event) => event.id !== last.id && event.id !== resolutionId);
+  const previousWorld = [...remainingEvents].reverse().find((event) => event.kind === 'operator' && event.world)?.world ?? createWorld(session.launch);
+  return {
+    ...session,
+    world: previousWorld,
+    turns: session.turns.slice(0, -1),
+    events: remainingEvents,
+  };
 }
