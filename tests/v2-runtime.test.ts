@@ -16,7 +16,7 @@ const adapter = (text = '*Peony looks up.* "Hello."', status: 'completed' | 'max
 describe('isolated V2 world and cognition', () => {
   it('does not invent a place, initial time of day or character presence', () => {
     const value = session();
-    expect(value.world.locationId).toBeNull(); expect(value.world.elapsedSeconds).toBe(0);
+    expect(value.world.locationId).toBeNull(); expect(value.world.elapsedSeconds).toBe(0); expect(value.world.simulationDay).toBe(1);
     expect(perceptionFor(value.world, value.launch.character!.id).presentActors).toEqual([]);
   });
   it('accepts only canonical scene anchors and existing actors, without mutating its input', () => {
@@ -33,6 +33,7 @@ describe('isolated V2 world and cognition', () => {
     expect(perceptionFor(learned.world, value.launch.persona.id).knownFacts).toEqual([]);
     expect(perceptionFor(learned.world, value.launch.character!.id).knownFacts).toEqual(['The lamp is broken.']);
     expect(operateWorld(learned, { type: 'advance-clock', seconds: 60 }).world.elapsedSeconds).toBe(60);
+    expect(operateWorld(learned, { type: 'advance-clock', seconds: 86400 }).world.simulationDay).toBe(2);
     for (const seconds of [-1, 0, 0.5, Infinity, 86401]) expect(() => operateWorld(learned, { type: 'advance-clock', seconds })).toThrow();
   });
   it('resolves elapsed time before rendering without trusting prose as movement or canon', () => {
@@ -41,6 +42,7 @@ describe('isolated V2 world and cognition', () => {
     const resolved = resolveV2PlayerTurn(value, value.draft);
     expect(value.world).toEqual(before);
     expect(resolved.session.world.elapsedSeconds).toBe(30);
+    expect(resolved.session.world.simulationDay).toBe(1);
     expect(resolved.resolution.status).toBe('resolved');
     expect(resolved.resolution.playerActorId).toBe(value.launch.persona.id);
     expect(resolved.resolution.subjectActorId).toBe(value.launch.character!.id);
@@ -49,20 +51,23 @@ describe('isolated V2 world and cognition', () => {
     expect(resolved.resolution.appliedActions).toEqual(['elapsed:turn:30s']);
     expect(resolved.resolution.deferredClaims.join(' ')).toContain('Movement');
   });
-  it('recognizes natural sleep prose, advances the night and creates a narrative-dice result', () => {
+  it('recognizes natural sleep prose, advances to the next simulation day and creates a narrative-dice result', () => {
     const intent = resolveTemporalIntent('*I closed my eyes and drifted off to sleep.*', () => 0.5);
     expect(intent.kind).toBe('sleep');
     expect(intent.seconds).toBe(8 * 3600);
+    expect(intent.dayAdvance).toBe(1);
     expect(intent.check?.kind).toBe('genesys-style');
     const value = { ...session(), draft: '*I closed my eyes and drifted off to sleep.*' };
     const resolved = resolveV2PlayerTurn(value, value.draft, { random: () => 0.5 });
     expect(resolved.session.world.elapsedSeconds).toBe(8 * 3600);
+    expect(resolved.session.world.simulationDay).toBe(2);
     expect(resolved.resolution.narrativeCheck).toBeTruthy();
   });
-  it('honors explicit durations and short rest phrasing', () => {
+  it('honors explicit durations and keeps naps on the same simulation day', () => {
     expect(resolveTemporalIntent('*I wait for two hours.*').seconds).toBe(7200);
     expect(resolveTemporalIntent('*I sat by the fire for a while.*').seconds).toBe(900);
-    expect(resolveTemporalIntent('*I take a nap for 30 minutes.*', () => 0.5).seconds).toBe(1800);
+    const nap = resolveTemporalIntent('*I take a nap for 30 minutes.*', () => 0.5);
+    expect(nap.seconds).toBe(1800); expect(nap.dayAdvance).toBe(0);
   });
 });
 
@@ -72,7 +77,7 @@ describe('V2 generation transaction', () => {
     value.settings = { ...value.settings, maxTokens: 1024, temperature: 0.7, topK: 50, topP: 0.8, presencePenalty: 0.2, frequencyPenalty: 0.3, stopSequences: ['END'], continueToEndOfSentence: false };
     const before = structuredClone(value);
     const next = await generateV2Turn(value, provider, { onPhase: (phase) => phases.push(phase) });
-    expect(value).toEqual(before); expect(next.world.elapsedSeconds).toBe(30);
+    expect(value).toEqual(before); expect(next.world.elapsedSeconds).toBe(30); expect(next.world.simulationDay).toBe(1);
     expect(next.turns).toHaveLength(1); expect(next.events).toHaveLength(2); expect(next.draft).toBe('');
     expect(next.events[0].kind).toBe('operator'); expect(next.events[0].id).toContain(':resolution');
     expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 1024, temperature: 0.7, topK: 50, topP: 0.8, presencePenalty: 0.2, frequencyPenalty: 0.3, continueToEndOfSentence: false, stopSequences: ['END'] }));
@@ -82,6 +87,7 @@ describe('V2 generation transaction', () => {
     expect(request[0].prompt).toContain('PLAYER-PERSPECTIVE WORLD RENDERING CONTRACT');
     expect(request[0].prompt).toContain('TURN RESOLUTION / ENGINE AUTHORITY');
     expect(request[0].prompt).toContain('"elapsedSeconds":30');
+    expect(request[0].prompt).toContain('"simulationDay":1');
     expect(request[0].prompt).toContain('Do not prefix it with a speaker name');
     expect(request[0]).not.toHaveProperty('world'); expect(request[0]).not.toHaveProperty('generationGrant');
     expect(next.turns[0].diagnostics.viewpointActorId).toBe(value.launch.persona.id);
@@ -97,7 +103,7 @@ describe('V2 generation transaction', () => {
     expect(second.events).toHaveLength(2); expect(second.nextTurn).toBe(first.nextTurn); expect(second.draft).toBe('Unsent words');
     expect(second.world.elapsedSeconds).toBe(elapsed);
     const removed = deleteLastTurn(second);
-    expect(removed.turns).toEqual([]); expect(removed.events).toEqual([]); expect(removed.world.elapsedSeconds).toBe(0);
+    expect(removed.turns).toEqual([]); expect(removed.events).toEqual([]); expect(removed.world.elapsedSeconds).toBe(0); expect(removed.world.simulationDay).toBe(1);
   });
   it('rejects reroll and deletion across a later state change instead of rewriting history', async () => {
     const first = await generateV2Turn(session(), adapter());
@@ -132,7 +138,7 @@ describe('V2 bounded context', () => {
     let value = session(); const provider = adapter();
     for (let i = 0; i < 200; i += 1) value = await generateV2Turn({ ...value, draft: `"Test turn ${i + 1}."` }, provider);
     expect(value.turns).toHaveLength(200); expect(value.events).toHaveLength(400);
-    expect(value.world.elapsedSeconds).toBe(200 * 30);
+    expect(value.world.elapsedSeconds).toBe(200 * 30); expect(value.world.simulationDay).toBe(1);
     expect(value.turns.at(-1)!.diagnostics.prompt.length).toBeLessThanOrEqual(CONTEXT_CHARACTER_BUDGET);
     expect(value.turns.at(-1)!.diagnostics.omitted.join(' ')).toContain('older exchange(s)');
     const raw = exportV2Session(value); expect(raw).not.toContain(value.launch.launchId); expect(raw).not.toContain('generationGrant');
