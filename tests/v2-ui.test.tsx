@@ -4,16 +4,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { V2App } from '../src/v2/ui/App';
 import { publicV2Package } from '../src/v2/contracts/launch';
 import { createV2Session } from '../src/v2/runtime/session';
-import { saveV2Session } from '../src/v2/storage/session';
+import { exportV2Session, saveV2Session } from '../src/v2/storage/session';
 import { v2Package } from './v2-fixtures';
 
 beforeEach(() => { sessionStorage.clear(); history.replaceState({}, '', '/v2'); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('V2 terminal interaction', () => {
-  it('does not load a V1 session during a direct V2 visit', async () => {
+  it('does not load a V1 session during a direct V2 visit and offers raw-save recovery', async () => {
     sessionStorage.setItem('speculus.session.v1', 'existing V1 data'); render(<V2App />);
-    expect(await screen.findByText('Simulation package not found')).toBeInTheDocument();
+    expect(await screen.findByText('Open a simulation or load a save')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Load raw save' })).toBeInTheDocument();
     expect(sessionStorage.getItem('speculus.session.v1')).toBe('existing V1 data');
+    expect(screen.queryByLabelText('Your next turn')).not.toBeInTheDocument();
+  });
+  it('identifies and stages a raw V2 save without treating it as authorization', async () => {
+    const value = createV2Session(publicV2Package(v2Package()));
+    render(<V2App />);
+    await screen.findByText('Open a simulation or load a save');
+    const input = screen.getByLabelText('Load V2 raw save');
+    fireEvent.change(input, { target: { files: [new File([exportV2Session(value)], 'save.json', { type: 'application/json' })] } });
+    expect(await screen.findByText('Save identified')).toBeInTheDocument();
+    expect(screen.getByText(/Raw save is staged|raw save is staged/i)).toBeInTheDocument();
+    expect(sessionStorage.getItem('speculus.pending-import.v2')).not.toContain(value.launch.launchId);
     expect(screen.queryByLabelText('Your next turn')).not.toBeInTheDocument();
   });
   it('claims once in StrictMode and removes the launch code', async () => {
