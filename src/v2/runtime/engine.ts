@@ -26,8 +26,6 @@ export function decodeV2SerializedRoleplayArtifacts(text: string) {
     + (text.match(/\\+\*/g)?.length ?? 0)
     + (text.match(/\\+\[/g)?.length ?? 0)
     + (text.match(/\\+\]/g)?.length ?? 0);
-  // Only decode when the completion strongly resembles a serialized roleplay
-  // string. This avoids treating an isolated literal backslash as formatting.
   if (escapedNewlines === 0 || escapedMarkup < 2) return text;
   return text
     .replace(/\\+r\\+n/g, '\n')
@@ -39,9 +37,6 @@ export function decodeV2SerializedRoleplayArtifacts(text: string) {
 }
 
 export function normalizeV2RoleplayFormat(text: string) {
-  // A quoted span wrapped in asterisks is dialogue, not narration. Models can
-  // occasionally emit Markdown-style *"dialogue"* even though V2 uses stars
-  // exclusively for actions.
   const cleaned = text.trim().replace(/\*("[^"\n]*"|“[^”\n]*”)\*/g, '$1');
   return cleaned.split(/(\[[^\]\n]+\]|"[^"\n]*"|“[^”\n]*”)/g).map((part) => {
     if (!part) return '';
@@ -52,7 +47,6 @@ export function normalizeV2RoleplayFormat(text: string) {
   }).join('').trim();
 }
 
-// These are structural checks, not a claim of complete semantic understanding.
 export function validateV2Reply(text: string, playerName = '') {
   const issues: string[] = [];
   if (!text.trim()) issues.push('The model returned an empty reply.');
@@ -83,12 +77,10 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   const player = skipPersona ? SKIPPED_PERSONA_TURN : (options.reroll ? last!.player : session.draft).trim();
   if (!skipPersona && (!player || player.length > 16000)) throw new Error('Write a player turn between 1 and 16000 characters.');
   const base = options.reroll ? { ...session, turns: session.turns.slice(0, -1) } : session;
+  const id = options.reroll ? last!.id : `v2:${session.id}:${session.nextTurn}`;
 
-  // Phase 2 deliberately separates resolution/state authority from prose rendering.
-  // The current resolver is conservative: unsupported freeform physical claims are
-  // deferred instead of being guessed into world state.
   options.onPhase?.('resolve');
-  const resolved = resolveV2PlayerTurn(base, { skipPersona });
+  const resolved = resolveV2PlayerTurn(base, player, { skipPersona, reroll: options.reroll });
   const resolvedSession = resolved.session;
 
   options.onPhase?.('context');
@@ -98,10 +90,6 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
     prompt: compiled.prompt, model: session.launch.model,
     temperature: settings.temperature, maxTokens: settings.maxTokens, topK: settings.topK, topP: settings.topP,
     presencePenalty: settings.presencePenalty, frequencyPenalty: settings.frequencyPenalty,
-    // V2 is a renderer packet, not the legacy speaker-tag chat format. Hidden
-    // player/persona stop strings can match at token zero and turn a formatting
-    // mistake into an empty HTTP-200 completion. Only authored/user settings are
-    // forwarded here; the Orbis bridge still applies provider-control stops.
     stopSequences: [...settings.stopSequences],
     continueToEndOfSentence: settings.continueToEndOfSentence, reroll: options.reroll, signal: options.signal,
   });
@@ -118,8 +106,9 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
     issues.push('The provider reached the hard output ceiling. The cut-off reply was discarded instead of being committed.');
   }
   const warnings = ['Semantic canon claim validation is not complete. Generated prose remains downstream of and non-authoritative over physical state.'];
-  if (resolved.resolution.status === 'deferred') warnings.push(...resolved.resolution.deferredClaims);
+  if (resolved.resolution.deferredClaims.length) warnings.push(...resolved.resolution.deferredClaims);
   if (skipPersona) warnings.push('The player persona turn was explicitly skipped. The renderer was forbidden from inventing a player action or decision.');
+  if (options.reroll) warnings.push('Reroll reused the already-resolved world state. Elapsed time and narrative dice were not rolled or committed twice.');
   if (decodedReply !== rawReply) warnings.push('Serialized roleplay escape sequences were decoded before commit.');
   if (canNormalize && normalizedReply !== decodedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
   if (compiled.omitted.length) warnings.push('Some history/canon was omitted. Inspect the Context tab for the exact list.');
@@ -132,6 +121,8 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
     subjectActorId: resolved.resolution.subjectActorId,
     resolutionStatus: resolved.resolution.status,
     resolutionDeferredClaims: [...resolved.resolution.deferredClaims],
+    resolutionElapsedSeconds: resolved.resolution.elapsedSeconds,
+    resolutionCheck: resolved.resolution.narrativeCheck,
     providerKind: result.metadata.provider, providerEndpoint: result.metadata.endpoint, requestId: result.metadata.requestId,
     finishReason: result.metadata.finishReason, requestedMaxTokens: result.metadata.requestedMaxTokens,
     providerInputTokensEstimate: result.metadata.inputTokensEstimate,
@@ -144,14 +135,20 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   };
   if (issues.length) throw new V2DraftRejected(`Draft rejected: ${issues.join(' ')}`, diagnostics);
   const at = options.now ?? Date.now();
-  const id = options.reroll ? last!.id : `v2:${session.id}:${session.nextTurn}`;
   const turn: V2Turn = { id, player, reply: normalizedReply, createdAt: options.reroll ? last!.createdAt : at, worldRevision: resolvedSession.world.revision, diagnostics };
   options.onPhase?.('commit');
+  const resolutionEvent = !options.reroll && resolvedSession.world.revision !== base.world.revision
+    ? {
+      id: `${id}:resolution`, kind: 'operator' as const,
+      label: resolved.resolution.appliedActions.join(', ').slice(0, 200) || 'turn-resolution',
+      worldRevision: resolvedSession.world.revision, at, world: resolvedSession.world,
+    }
+    : null;
   return {
     ...resolvedSession, draft: options.reroll || skipPersona ? session.draft : '', turns: [...resolvedSession.turns, turn],
     nextTurn: session.nextTurn + (options.reroll ? 0 : 1),
     events: options.reroll
       ? session.events.map((event) => event.id === id ? { ...event, label: skipPersona ? 'Reply rerolled / persona skipped' : 'Reply rerolled', at } : event)
-      : [...resolvedSession.events, { id, kind: 'turn', label: skipPersona ? 'Reply committed / persona skipped' : 'Reply committed', worldRevision: resolvedSession.world.revision, at }],
+      : [...resolvedSession.events, ...(resolutionEvent ? [resolutionEvent] : []), { id, kind: 'turn', label: skipPersona ? 'Reply committed / persona skipped' : 'Reply committed', worldRevision: resolvedSession.world.revision, at }],
   };
 }
