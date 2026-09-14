@@ -5,6 +5,7 @@ import { generateV2Turn, V2DraftRejected, type EnginePhase } from '../runtime/en
 import { generateV2PersonaDraft } from '../runtime/persona-draft';
 import { createV2Session, deleteLastTurn, operateWorld, type V2Diagnostics, type V2Session } from '../runtime/session';
 import { exportV2Session, importV2Session, loadV2Session, MAX_V2_FILE_BYTES, saveV2Session } from '../storage/session';
+import { detachedTranscriptChannelName, type DetachedTranscriptMessage } from './detached-channel';
 import { V2DiagnosticsPanel } from './Diagnostics';
 import { SettingsPanel } from './SettingsPanel';
 import { V2Transcript } from './Transcript';
@@ -38,13 +39,24 @@ export function V2App() {
   const [rejected, setRejected] = useState<V2Diagnostics | null>(null);
   const [showSettings, setShowSettings] = useState(true);
   const [showDiagnostics, setShowDiagnostics] = useState(true);
+  const [transcriptDetached, setTranscriptDetached] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const detachedWindow = useRef<Window | null>(null);
+  const detachedChannel = useRef<BroadcastChannel | null>(null);
+  const liveSession = useRef<V2Session | null>(null);
+  const liveBusy = useRef(false);
+  const busy = phase !== null || importing;
 
   const notePhase = (next: EnginePhase) => {
     setPhase(next);
     setPhaseSeen((current) => current.includes(next) ? current : [...current, next]);
   };
+
+  useEffect(() => {
+    liveSession.current = session;
+    liveBusy.current = busy;
+  }, [session, busy]);
 
   useEffect(() => {
     let active = true;
@@ -69,6 +81,49 @@ export function V2App() {
     try { saveV2Session(session); setStorageError(''); }
     catch { setStorageError('Tab storage is unavailable or full. Export your session now to preserve it.'); }
   }, [session]);
+
+  useEffect(() => {
+    if (!session || typeof BroadcastChannel === 'undefined') return;
+    const channel = new BroadcastChannel(detachedTranscriptChannelName(session.id));
+    detachedChannel.current = channel;
+    const sendState = () => {
+      const current = liveSession.current;
+      if (!current) return;
+      channel.postMessage({ type: 'state', sessionId: current.id, session: current, busy: liveBusy.current } satisfies DetachedTranscriptMessage);
+    };
+    channel.onmessage = (event: MessageEvent<DetachedTranscriptMessage>) => {
+      const message = event.data;
+      if (!message || message.sessionId !== session.id) return;
+      if (message.type === 'ready') {
+        setTranscriptDetached(true);
+        sendState();
+      } else if (message.type === 'closed') {
+        if (detachedWindow.current?.closed) detachedWindow.current = null;
+        setTranscriptDetached(false);
+      }
+    };
+    sendState();
+    return () => {
+      channel.close();
+      if (detachedChannel.current === channel) detachedChannel.current = null;
+    };
+  }, [session?.id]);
+
+  useEffect(() => {
+    if (!session || !transcriptDetached) return;
+    detachedChannel.current?.postMessage({ type: 'state', sessionId: session.id, session, busy } satisfies DetachedTranscriptMessage);
+  }, [session, busy, transcriptDetached]);
+
+  useEffect(() => {
+    if (!transcriptDetached) return;
+    const timer = window.setInterval(() => {
+      if (detachedWindow.current?.closed) {
+        detachedWindow.current = null;
+        setTranscriptDetached(false);
+      }
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [transcriptDetached]);
 
   const generate = async (reroll = false, skipPersona = false) => {
     if (!session || controller.current || importLock.current) return;
@@ -99,6 +154,34 @@ export function V2App() {
     } finally { controller.current = null; setPhase(null); }
   };
 
+  const openDetachedTranscript = () => {
+    if (!session) return;
+    if (typeof BroadcastChannel === 'undefined') {
+      setError('This browser does not support the live channel required by the detached reader.');
+      return;
+    }
+    if (detachedWindow.current && !detachedWindow.current.closed) {
+      detachedWindow.current.focus();
+      setTranscriptDetached(true);
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = '';
+    url.searchParams.set('display', session.id);
+    const target = `speculus-v2-display-${session.id.replace(/[^a-z0-9_-]+/gi, '-')}`;
+    const popup = window.open(url.toString(), target, 'popup=yes,width=960,height=900,resizable=yes,scrollbars=yes');
+    if (!popup) {
+      setError('The browser blocked the detached reader window. Allow pop-ups for Speculus and try again.');
+      setTranscriptDetached(false);
+      return;
+    }
+    detachedWindow.current = popup;
+    setTranscriptDetached(true);
+    setError('');
+    popup.focus();
+  };
+
   const download = () => {
     if (!session) return;
     try {
@@ -121,7 +204,6 @@ export function V2App() {
     finally { importLock.current = false; setImporting(false); if (fileInput.current) fileInput.current.value = ''; }
   };
 
-  const busy = phase !== null || importing;
   const expired = session ? session.launch.expiresAt <= Date.now() : false;
   return <main className={`spec-v2 ${session?.settings.crtEffects !== false ? 'v2-crt' : ''}`}>
     <header className="v2-masthead"><div><div className="v2-brand"><h1>SPECULUS</h1><span>V2</span><span className="v2-badge">Experimental</span></div><p>Howling Whispers / Simulation lab</p></div>
@@ -134,29 +216,31 @@ export function V2App() {
         try { setSession(operateWorld(session, action)); setError(''); }
         catch (cause) { setError(messageOf(cause)); }
       }} />}
-      <section className="v2-panel v2-simulation" aria-label="Simulation">
+      <section className={`v2-panel v2-simulation ${transcriptDetached ? 'v2-transcript-detached' : ''}`} aria-label="Simulation">
         <header className="v2-panel-heading"><h2>Simulation</h2><span>{session.launch.primaryAsset.name}</span></header>
-        <V2Transcript session={session} busy={busy} />
+        {!transcriptDetached && <V2Transcript session={session} busy={busy} />}
         <div className="v2-transcript-tools">
           <button disabled={busy || !session.turns.length || expired || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => void generate(true)}>Reroll latest</button>
           <button disabled={busy || expired} onClick={() => void generate(false, true)}>Skip persona turn</button>
           <button disabled={busy || expired} onClick={() => void impersonate()}>Impersonate</button>
+          <button type="button" onClick={openDetachedTranscript}>{transcriptDetached ? 'Focus reader' : 'Detach reader'}</button>
           <button disabled={busy} onClick={download}>Export raw</button><button disabled={busy} onClick={() => fileInput.current?.click()}>Import raw</button>
           <button className="v2-delete" disabled={busy || !session.turns.length} onClick={() => {
             if (window.confirm('Remove the latest player/reply pair and its event from this V2 session?')) { setSession(deleteLastTurn(session)); setRejected(null); }
           }}>Delete latest</button>
           <input hidden ref={fileInput} type="file" accept=".json,application/json" aria-label="Import V2 session" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); }} />
         </div>
+        {transcriptDetached && <div className="v2-detached-note"><span>Reading display detached</span><small>Move the reader window to any monitor. Closing it restores the transcript here.</small></div>}
         {(error || storageError || expired) && <div className="v2-fault" role="alert">{storageError || error || 'Authorization expired. Export this session, launch the same record from Orbis, then import the V2 export.'}</div>}
         <form className="v2-composer" onSubmit={(event) => { event.preventDefault(); void generate(); }}>
           <textarea aria-label="Your next turn" placeholder="What do you do next?" value={session.draft} maxLength={16000} disabled={busy} onChange={(event) => setSession({ ...session, draft: event.target.value })} onKeyDown={(event) => {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void generate(); }
           }} />
-          <div><small>Ctrl / Cmd + Enter to send</small>{busy ? <button type="button" onClick={() => controller.current?.abort()}>Cancel</button> : <button className="v2-send" disabled={!session.draft.trim() || expired}>Send</button>}</div>
+          <div><small>Ctrl / Cmd + Enter to send{transcriptDetached ? ' / detached reader live' : ''}</small>{busy ? <button type="button" onClick={() => controller.current?.abort()}>Cancel</button> : <button className="v2-send" disabled={!session.draft.trim() || expired}>Send</button>}</div>
         </form>
       </section>
       {showDiagnostics && <V2DiagnosticsPanel session={session} rejected={rejected} />}
     </div> : <section className="v2-panel v2-boot"><span className="v2-eyebrow">V2 / BOOT SEQUENCE</span><h2>{booting ? 'Reading simulation medium...' : 'Simulation package not found'}</h2><p role={booting ? 'status' : 'alert'}>{error || 'Waiting for the one-time Orbis launch package.'}</p><small>V1 and V2 sessions are separate. No V1 data has been loaded or modified.</small></section>}
-    <footer className="v2-status" aria-live="polite"><div>{PIPELINE_STEPS.map((step) => <span key={step} className={phase === step ? 'is-active' : phaseSeen.includes(step) ? 'is-complete' : ''}><i />{step}</span>)}</div><span>{phase ? phase.toUpperCase() : error || storageError ? 'FAULT' : session ? expired ? 'RELAUNCH REQUIRED' : 'READY' : 'HALTED'}</span><small>/v2</small></footer>
+    <footer className="v2-status" aria-live="polite"><div>{PIPELINE_STEPS.map((step) => <span key={step} className={phase === step ? 'is-active' : phaseSeen.includes(step) ? 'is-complete' : ''}><i />{step}</span>)}</div><span>{phase ? phase.toUpperCase() : error || storageError ? 'FAULT' : session ? expired ? 'RELAUNCH REQUIRED' : transcriptDetached ? 'READER DETACHED' : 'READY' : 'HALTED'}</span><small>/v2</small></footer>
   </main>;
 }
