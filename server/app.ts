@@ -92,6 +92,9 @@ function pruneExpired(): void {
 export function createApp(options: { production?: boolean } = {}) {
   const app = express();
   app.disable('x-powered-by');
+  // Archived V2 sessions may contain long transcripts. Keep the larger parser scoped
+  // to the trusted Orbis launch deposit rather than widening generation/API bodies.
+  app.use('/api/v2/launch', express.json({ limit: '18mb' }));
   app.use(express.json({ limit: '2mb' }));
   app.use('/api/v2', createV2Router(options));
   app.get('/api/health', (_request, response) => response.json({ ok: true, service: 'speculus-api', launchBridge: true }));
