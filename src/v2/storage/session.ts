@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { v2StoredPackageSchema, type V2ClientPackage } from '../contracts/launch';
 import { eventSchema, settingsSchema, turnSchema, type V2Session } from '../runtime/session';
-import { assertWorldCanon, createWorld, worldSchema } from '../runtime/world';
+import { assertWorldCanon, assetsFor, createWorld, worldSchema } from '../runtime/world';
 
 export const V2_STORAGE_KEY = 'speculus.session.v2';
 export const V2_EXPORT_FORMAT = 'speculus-v2-session';
@@ -11,7 +11,16 @@ const stateSchema = z.object({
   settings: settingsSchema, draft: z.string().max(16000), turns: z.array(turnSchema).max(20000),
   events: z.array(eventSchema).max(40000), nextTurn: z.number().int().positive(),
 });
-const sourceSchema = z.object({ id: z.string(), type: z.string(), revision: z.string() });
+const identitySchema = z.object({ id: z.string(), revision: z.string(), name: z.string() });
+const sourceSchema = z.object({
+  id: z.string(), type: z.string(), revision: z.string(), name: z.string().optional(),
+  world: identitySchema.nullable().optional(),
+  location: identitySchema.nullable().optional(),
+  persona: z.object({ id: z.string(), name: z.string() }).optional(),
+  character: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
+  exportedAt: z.number().int().positive().optional(),
+  elapsedSeconds: z.number().int().nonnegative().optional(),
+});
 const transferSchema = stateSchema.extend({ format: z.literal(V2_EXPORT_FORMAT), source: sourceSchema });
 
 function validateState(state: z.infer<typeof stateSchema>, launch: V2ClientPackage) {
@@ -43,12 +52,55 @@ function validateState(state: z.infer<typeof stateSchema>, launch: V2ClientPacka
   if (JSON.stringify(replay) !== JSON.stringify(state.world)) throw new Error('V2 world state does not match its operator ledger.');
 }
 
-export function exportV2Session(session: V2Session): string {
+function cleanFilenamePart(value: string, fallback: string) {
+  const cleaned = value.trim().replace(/[^a-z0-9_-]+/gi, '-').replace(/^-+|-+$/g, '').slice(0, 50);
+  return cleaned || fallback;
+}
+
+export function v2ExportFilename(session: V2Session, now = new Date()) {
+  const records = assetsFor(session.launch);
+  const world = session.launch.primaryAsset.type === 'world'
+    ? session.launch.primaryAsset
+    : records.find((asset) => asset.type === 'world');
+  const location = records.find((asset) => asset.id === session.world.locationId && asset.type === 'place');
+  const stamp = now.toISOString().replace(/:\d{2}\.\d{3}Z$/, '').replace('T', '_').replaceAll(':', '-');
+  return [
+    'Speculus',
+    cleanFilenamePart(world?.name ?? session.launch.primaryAsset.name, 'Unbound'),
+    cleanFilenamePart(location?.name ?? 'NoLocation', 'NoLocation'),
+    cleanFilenamePart(session.launch.persona.name, 'Persona'),
+    stamp,
+  ].join('_') + '.json';
+}
+
+export function exportV2Session(session: V2Session, now = Date.now()): string {
   const state = stateSchema.parse(session);
   validateState(state, session.launch);
-  const { id, revision, type } = session.launch.primaryAsset;
+  const { id, revision, type, name } = session.launch.primaryAsset;
+  const records = assetsFor(session.launch);
+  const world = type === 'world' ? session.launch.primaryAsset : records.find((asset) => asset.type === 'world');
+  const location = records.find((asset) => asset.id === session.world.locationId && asset.type === 'place');
   // No launch ID, grant, expiry, cookies or provider credentials are exported.
-  return JSON.stringify({ format: V2_EXPORT_FORMAT, source: { id, revision, type }, ...state }, null, 2);
+  return JSON.stringify({
+    format: V2_EXPORT_FORMAT,
+    source: {
+      id, revision, type, name,
+      world: world ? { id: world.id, revision: world.revision, name: world.name } : null,
+      location: location ? { id: location.id, revision: location.revision, name: location.name } : null,
+      persona: { id: session.launch.persona.id, name: session.launch.persona.name },
+      character: session.launch.character ? { id: session.launch.character.id, name: session.launch.character.name } : null,
+      exportedAt: now,
+      elapsedSeconds: session.world.elapsedSeconds,
+    },
+    ...state,
+  }, null, 2);
+}
+
+export function inspectV2Session(raw: string) {
+  if (new Blob([raw]).size > MAX_V2_FILE_BYTES) throw new Error('The V2 file exceeds 16 MB.');
+  const parsed = transferSchema.safeParse(JSON.parse(raw));
+  if (!parsed.success) throw new Error('This is not a supported V2 export. V1 files must stay in V1.');
+  return parsed.data.source;
 }
 
 export function importV2Session(raw: string, current: V2Session): V2Session {
@@ -67,7 +119,6 @@ export function importV2Session(raw: string, current: V2Session): V2Session {
 
 export function saveV2Session(session: V2Session, storage: Pick<Storage, 'setItem'> = sessionStorage): void {
   const state = stateSchema.parse(session);
-  // Whitelist the launch contract as well as session fields before persisting.
   const launch = v2StoredPackageSchema.parse(session.launch);
   storage.setItem(V2_STORAGE_KEY, JSON.stringify({ ...state, id: session.id, launch }));
 }
