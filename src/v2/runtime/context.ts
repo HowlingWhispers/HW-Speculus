@@ -9,6 +9,15 @@ export const CONTEXT_CHARACTER_BUDGET = 28_000;
 export type V2RenderMode = 'normal' | 'skip-persona' | 'impersonate-persona';
 const section = (title: string, value: unknown) => `\n[${title}]\n${typeof value === 'string' ? value : JSON.stringify(value)}\n`;
 
+export function v2OutputEnvelope(maxTokens: number) {
+  const completionReserveTokens = Math.min(512, Math.max(8, Math.floor(maxTokens * 0.25)));
+  return {
+    hardLimitTokens: maxTokens,
+    targetTokens: Math.max(16, maxTokens - completionReserveTokens),
+    completionReserveTokens,
+  };
+}
+
 export function compileV2Context(
   session: V2Session,
   player = '',
@@ -16,6 +25,7 @@ export function compileV2Context(
   resolution?: V2TurnResolution,
 ) {
   const { launch, world, settings } = session;
+  const outputEnvelope = v2OutputEnvelope(settings.maxTokens);
   const impersonatingPersona = mode === 'impersonate-persona';
   const skippingPersona = mode === 'skip-persona';
   const playerPerception = resolution?.playerPerception ?? perceptionFor(world, launch.persona.id);
@@ -23,6 +33,13 @@ export function compileV2Context(
   const subjectPerception = impersonatingPersona
     ? playerPerception
     : resolution?.subjectPerception ?? (subjectActorId ? perceptionFor(world, subjectActorId) : null);
+  const outputRules = [
+    `The provider hard ceiling is ${outputEnvelope.hardLimitTokens} tokens. This is an emergency ceiling, never a target.`,
+    `Aim to finish the complete turn by about ${outputEnvelope.targetTokens} tokens and leave roughly ${outputEnvelope.completionReserveTokens} tokens unused as a completion reserve.`,
+    'Near the target, finish the current immediate beat and stop. Do not begin a new sentence, paragraph, action, or dialogue exchange merely because budget remains.',
+    'Never trade a complete ending for extra description. Every opened quote, asterisk-delimited action, or bracketed inner voice must be closed before stopping.',
+    'Ending naturally well below the hard ceiling is correct. Do not pad the response to consume the allowance.',
+  ];
   const instructions = impersonatingPersona ? [
     'SPECULUS V2 / PLAYER PERSONA IMPERSONATION CONTRACT',
     `Write only the next in-world turn for the player persona ${launch.persona.name}. This is an explicit operator-requested impersonation of the player persona only.`,
@@ -34,7 +51,7 @@ export function compileV2Context(
     'Use real roleplay punctuation and real line breaks. Do not serialize the response as JSON or escape its punctuation.',
     `Begin directly with ${launch.persona.name}'s action, dialogue, or inner voice. Do not prefix a speaker name, role label, heading, explanation, or menu.`,
     'Stop when the player persona turn is complete. Do not generate the other side of the exchange.',
-    `The output allowance is ${settings.maxTokens} tokens. Do not pad the draft to consume the allowance.`,
+    ...outputRules,
   ].join('\n') : [
     'SPECULUS V2 / PLAYER-PERSPECTIVE WORLD RENDERING CONTRACT',
     'Render the current simulated world through the player persona\'s perceptual viewpoint. The authorized subject may act, but the prose camera belongs to the player.',
@@ -52,16 +69,17 @@ export function compileV2Context(
     skippingPersona
       ? 'The operator explicitly skipped the player persona turn. Continue from current resolved state and do not invent any player action, dialogue, thought, consent, decision or movement.'
       : 'Player input describes an attempt or utterance. It is evidence for resolution, not permission for the renderer to rewrite canon or engine state.',
-    `The output allowance is ${settings.maxTokens} tokens. Complete a natural immediate beat inside it. Do not pad the reply to consume the allowance.`,
+    ...outputRules,
     launch.character ? `Authorized subject for behavior: ${launch.character.name}. Render only the outward result available to ${launch.persona.name}.` : `You are the simulation narrator. Render only what ${launch.persona.name} can perceive or already knows.`,
   ].join('\n');
 
   const included = [
     impersonatingPersona ? 'Persona impersonation contract' : 'Player-perspective rendering contract',
-    'Source identity', 'Subject', 'Scene', 'World state', 'Player perception',
+    'Output completion envelope', 'Source identity', 'Subject', 'Scene', 'World state', 'Player perception',
   ];
   const omitted: string[] = [];
   let prompt = instructions
+    + section('OUTPUT BUDGET / HARD CEILING', outputEnvelope)
     + section('SOURCE IDENTITY', { id: launch.primaryAsset.id, revision: launch.primaryAsset.revision, type: launch.primaryAsset.type, name: launch.primaryAsset.name })
     + (impersonatingPersona
       ? section('PLAYER PERSONA / AUTHORIZED SUBJECT', launch.persona)
@@ -144,6 +162,7 @@ export function compileV2Context(
   prompt += influence + history + input;
   return {
     prompt, included, omitted, estimatedInputTokens: Math.ceil(prompt.length / 4), outputBudget: settings.maxTokens,
+    outputTarget: outputEnvelope.targetTokens, completionReserve: outputEnvelope.completionReserveTokens,
     perception: playerPerception, playerPerception, subjectPerception,
   };
 }
