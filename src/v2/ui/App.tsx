@@ -4,15 +4,17 @@ import { V2BrowserProvider } from '../providers/browser';
 import { generateV2Turn, V2DraftRejected, type EnginePhase } from '../runtime/engine';
 import { generateV2PersonaDraft } from '../runtime/persona-draft';
 import { createV2Session, deleteLastTurn, operateWorld, type V2Diagnostics, type V2Session } from '../runtime/session';
-import { exportV2Session, importV2Session, loadV2Session, MAX_V2_FILE_BYTES, saveV2Session } from '../storage/session';
+import { exportV2Session, importV2Session, inspectV2Session, loadV2Session, MAX_V2_FILE_BYTES, saveV2Session, v2ExportFilename } from '../storage/session';
 import { detachedTranscriptChannelName, type DetachedTranscriptMessage } from './detached-channel';
 import { V2DiagnosticsPanel } from './Diagnostics';
 import { SettingsPanel } from './SettingsPanel';
 import { V2Transcript } from './Transcript';
 
-const PIPELINE_STEPS = ['context', 'generate', 'validate', 'commit'] as const;
+const PIPELINE_STEPS = ['resolve', 'context', 'generate', 'validate', 'commit'] as const;
+const PENDING_IMPORT_KEY = 'speculus.pending-import.v2';
 
-// React StrictMode replays mount effects. A one-time launch must be claimed once.
+type PendingSaveIdentity = ReturnType<typeof inspectV2Session>;
+
 let claim: { code: string; promise: Promise<V2ClientPackage> } | null = null;
 function claimPackage(code: string) {
   if (claim?.code === code) return claim.promise;
@@ -34,6 +36,7 @@ export function V2App() {
   const [phase, setPhase] = useState<EnginePhase | null>(null);
   const [phaseSeen, setPhaseSeen] = useState<EnginePhase[]>([]);
   const [importing, setImporting] = useState(false);
+  const [pendingSave, setPendingSave] = useState<PendingSaveIdentity | null>(null);
   const importLock = useRef(false);
   const [importRevision, setImportRevision] = useState(0);
   const [rejected, setRejected] = useState<V2Diagnostics | null>(null);
@@ -42,6 +45,7 @@ export function V2App() {
   const [transcriptDetached, setTranscriptDetached] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const rootFileInput = useRef<HTMLInputElement>(null);
   const detachedWindow = useRef<Window | null>(null);
   const detachedChannel = useRef<BroadcastChannel | null>(null);
   const liveSession = useRef<V2Session | null>(null);
@@ -64,9 +68,19 @@ export function V2App() {
     const code = new URLSearchParams(window.location.search).get('launch');
     void (async () => {
       try {
-        const next = code ? createV2Session(await claimPackage(code)) : loadV2Session();
-        if (!next) throw new Error('Simulation package not found. Select Speculus V2 in Orbis Account settings, then use Simulate on a record.');
-        if (active) {
+        let next = code ? createV2Session(await claimPackage(code)) : loadV2Session();
+        if (code && next) {
+          const pending = sessionStorage.getItem(PENDING_IMPORT_KEY);
+          if (pending) {
+            try {
+              next = importV2Session(pending, next);
+              sessionStorage.removeItem(PENDING_IMPORT_KEY);
+            } catch (cause) {
+              setError(`The staged save was not loaded: ${messageOf(cause)}`);
+            }
+          }
+        }
+        if (active && next) {
           if (code) window.history.replaceState({}, '', window.location.pathname);
           setSession(next);
         }
@@ -187,7 +201,7 @@ export function V2App() {
     try {
       const url = URL.createObjectURL(new Blob([exportV2Session(session)], { type: 'application/json' }));
       const anchor = document.createElement('a'); anchor.href = url;
-      anchor.download = `${session.launch.primaryAsset.name.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 60)}-speculus-v2-session.json`;
+      anchor.download = v2ExportFilename(session);
       anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (cause) { setError(messageOf(cause)); }
   };
@@ -204,10 +218,27 @@ export function V2App() {
     finally { importLock.current = false; setImporting(false); if (fileInput.current) fileInput.current.value = ''; }
   };
 
+  const stageRootSave = async (file?: File) => {
+    if (!file) return;
+    if (file.size > MAX_V2_FILE_BYTES) { setError('V2 imports are limited to 16 MB.'); return; }
+    try {
+      const raw = await file.text();
+      const identity = inspectV2Session(raw);
+      sessionStorage.setItem(PENDING_IMPORT_KEY, raw);
+      setPendingSave(identity);
+      setError('');
+    } catch (cause) {
+      setPendingSave(null);
+      setError(messageOf(cause));
+    } finally {
+      if (rootFileInput.current) rootFileInput.current.value = '';
+    }
+  };
+
   const expired = session ? session.launch.expiresAt <= Date.now() : false;
   return <main className={`spec-v2 ${session?.settings.crtEffects !== false ? 'v2-crt' : ''}`}>
     <header className="v2-masthead"><div><div className="v2-brand"><h1>SPECULUS</h1><span>V2</span><span className="v2-badge">Experimental</span></div><p>Howling Whispers / Simulation lab</p></div>
-      <div className="v2-connection"><span>{session ? 'ORBIS LINK' : 'SYSTEM MEDIUM'}</span><small>{session ? expired ? 'Authorization expired' : 'Package loaded' : 'Required to begin'}</small>
+      <div className="v2-connection"><span>{session ? 'ORBIS LINK' : 'SYSTEM MEDIUM'}</span><small>{session ? expired ? 'Authorization expired' : 'Package loaded' : 'Orbis launch or raw save'}</small>
         {session && <nav aria-label="Panel visibility"><button type="button" aria-pressed={showSettings} onClick={() => setShowSettings(!showSettings)}>Setup</button><button type="button" aria-pressed={showDiagnostics} onClick={() => setShowDiagnostics(!showDiagnostics)}>Diagnostics</button></nav>}
       </div>
     </header>
@@ -225,8 +256,8 @@ export function V2App() {
           <button disabled={busy || expired} onClick={() => void impersonate()}>Impersonate</button>
           <button type="button" onClick={openDetachedTranscript}>{transcriptDetached ? 'Focus reader' : 'Detach reader'}</button>
           <button disabled={busy} onClick={download}>Export raw</button><button disabled={busy} onClick={() => fileInput.current?.click()}>Import raw</button>
-          <button className="v2-delete" disabled={busy || !session.turns.length} onClick={() => {
-            if (window.confirm('Remove the latest player/reply pair and its event from this V2 session?')) { setSession(deleteLastTurn(session)); setRejected(null); }
+          <button className="v2-delete" disabled={busy || !session.turns.length || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => {
+            if (window.confirm('Remove the latest player/reply pair and its resolved state from this V2 session?')) { setSession(deleteLastTurn(session)); setRejected(null); }
           }}>Delete latest</button>
           <input hidden ref={fileInput} type="file" accept=".json,application/json" aria-label="Import V2 session" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); }} />
         </div>
@@ -240,7 +271,21 @@ export function V2App() {
         </form>
       </section>
       {showDiagnostics && <V2DiagnosticsPanel session={session} rejected={rejected} />}
-    </div> : <section className="v2-panel v2-boot"><span className="v2-eyebrow">V2 / BOOT SEQUENCE</span><h2>{booting ? 'Reading simulation medium...' : 'Simulation package not found'}</h2><p role={booting ? 'status' : 'alert'}>{error || 'Waiting for the one-time Orbis launch package.'}</p><small>V1 and V2 sessions are separate. No V1 data has been loaded or modified.</small></section>}
-    <footer className="v2-status" aria-live="polite"><div>{PIPELINE_STEPS.map((step) => <span key={step} className={phase === step ? 'is-active' : phaseSeen.includes(step) ? 'is-complete' : ''}><i />{step}</span>)}</div><span>{phase ? phase.toUpperCase() : error || storageError ? 'FAULT' : session ? expired ? 'RELAUNCH REQUIRED' : transcriptDetached ? 'READER DETACHED' : 'READY' : 'HALTED'}</span><small>/v2</small></footer>
+    </div> : <section className="v2-panel v2-boot">
+      <span className="v2-eyebrow">V2 / BOOT SEQUENCE</span>
+      <h2>{booting ? 'Reading simulation medium...' : pendingSave ? 'Save identified' : 'Open a simulation or load a save'}</h2>
+      {booting ? <p role="status">Checking this tab for a launch package or existing V2 session.</p> : pendingSave ? <>
+        <p role="status">{pendingSave.name ?? pendingSave.world?.name ?? 'Speculus save'} · {pendingSave.location?.name ?? 'no saved location'} · {pendingSave.persona?.name ?? 'saved persona'}</p>
+        <p>The raw save is staged in this tab. Open its matching Orbis record at revision <strong>{pendingSave.revision}</strong> and choose Simulate. Speculus will consume the staged save automatically after Orbis issues fresh authorization.</p>
+        <button type="button" onClick={() => rootFileInput.current?.click()}>Choose a different raw save</button>
+      </> : <>
+        <p>Start from Orbis as usual, or identify a previously exported V2 save here. Raw saves never contain reusable launch authorization.</p>
+        <button type="button" onClick={() => rootFileInput.current?.click()}>Load raw save</button>
+      </>}
+      {error && <div className="v2-fault" role="alert">{error}</div>}
+      <input hidden ref={rootFileInput} type="file" accept=".json,application/json" aria-label="Load V2 raw save" onChange={(event) => void stageRootSave(event.target.files?.[0])} />
+      <small>V1 and V2 sessions are separate. No V1 data has been loaded or modified.</small>
+    </section>}
+    <footer className="v2-status" aria-live="polite"><div>{PIPELINE_STEPS.map((step) => <span key={step} className={phase === step ? 'is-active' : phaseSeen.includes(step) ? 'is-complete' : ''}><i />{step}</span>)}</div><span>{phase ? phase.toUpperCase() : error || storageError ? 'FAULT' : session ? expired ? 'RELAUNCH REQUIRED' : transcriptDetached ? 'READER DETACHED' : 'READY' : pendingSave ? 'SAVE STAGED' : 'STANDBY'}</span><small>/v2</small></footer>
   </main>;
 }
