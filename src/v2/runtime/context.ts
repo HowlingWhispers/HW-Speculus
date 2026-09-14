@@ -43,7 +43,7 @@ export function compileV2Context(
     'SPECULUS V2 / PLAYER PERSONA IMPERSONATION CONTRACT',
     `Write only the next in-world turn for the player persona ${launch.persona.name}. This is an explicit operator-requested impersonation of the player persona only.`,
     'Do not write, continue, react for, or impersonate the character or simulation narrator. Their next turn belongs to the normal renderer after the player draft is sent.',
-    'The engine owns physical locations, elapsed time and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
+    'The engine owns physical locations, elapsed time, simulation day and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
     'Do not invent named places, teleport actors, advance the clock, close the scene, or alter engine state.',
     'Use only information available to the player persona from authored persona data, current scene state, current perception and the visible recent exchange.',
     'Write only in-world roleplay: dialogue in double quotes, action/narration in single asterisks, inner voice in square brackets.',
@@ -55,8 +55,8 @@ export function compileV2Context(
     'SPECULUS V2 / PLAYER-PERSPECTIVE WORLD RENDERING CONTRACT',
     'Render the current simulated world through the player persona\'s perceptual viewpoint. The authorized subject may act, but the prose camera belongs to the player.',
     'The renderer is downstream from world resolution. It may describe state and observable consequences, but it is not allowed to make generated prose authoritative state.',
-    'The engine owns physical locations, elapsed time and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
-    'Do not invent named places, teleport actors, independently advance the clock, close the scene, or write actions, thoughts, dialogue, consent, decisions or movement for the player.',
+    'The engine owns physical locations, elapsed time, simulation day and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
+    'Do not invent named places, teleport actors, independently advance the clock or day, close the scene, or write actions, thoughts, dialogue, consent, decisions or movement for the player.',
     'When TURN RESOLUTION reports elapsed time or a narrative check, render consequences consistent with that engine result without changing the result.',
     'Only explicitly present actors can interact. Related canon is not automatically known, perceived or physically present.',
     'Authorized-subject private context may guide behavior, but must never be exposed as narration unless the player can perceive its outward evidence or already knows it.',
@@ -88,7 +88,7 @@ export function compileV2Context(
       ? section('CHARACTER OR NARRATOR / NEVER IMPERSONATE', launch.character ?? { name: 'SIMULATION NARRATOR' })
       : section('PLAYER PERSONA / OUTPUT VIEWPOINT / NEVER IMPERSONATE', launch.persona))
     + section('AUTHORED SCENE', launch.scene)
-    + section('ENGINE STATE / READ ONLY', { revision: world.revision, elapsedSeconds: world.elapsedSeconds, simulationDay: Math.floor(world.elapsedSeconds / 86400) + 1, locationId: world.locationId, locationLabel: assetsFor(launch).find((asset) => asset.id === world.locationId)?.name ?? null, actors: world.actors.map(({ knowledge: _private, ...actor }) => actor) })
+    + section('ENGINE STATE / READ ONLY', { revision: world.revision, elapsedSeconds: world.elapsedSeconds, simulationDay: world.simulationDay, locationId: world.locationId, locationLabel: assetsFor(launch).find((asset) => asset.id === world.locationId)?.name ?? null, actors: world.actors.map(({ knowledge: _private, ...actor }) => actor) })
     + section('PLAYER PERCEPTION / OUTPUT VIEW', playerPerception);
 
   if (!impersonatingPersona && subjectPerception) {
