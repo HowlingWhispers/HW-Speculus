@@ -1,9 +1,10 @@
 import type { ProviderAdapter } from '../../runtime/providers/types';
 import { compileV2Context } from './context';
+import { resolveV2PlayerTurn } from './resolution';
 import { settingsSchema, type V2Diagnostics, type V2Session, type V2Turn } from './session';
 import { SKIPPED_PERSONA_TURN } from './turn-control';
 
-export type EnginePhase = 'context' | 'generate' | 'validate' | 'commit';
+export type EnginePhase = 'resolve' | 'context' | 'generate' | 'validate' | 'commit';
 export class V2DraftRejected extends Error {
   constructor(message: string, readonly diagnostics: V2Diagnostics) { super(message); }
 }
@@ -82,8 +83,16 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   const player = skipPersona ? SKIPPED_PERSONA_TURN : (options.reroll ? last!.player : session.draft).trim();
   if (!skipPersona && (!player || player.length > 16000)) throw new Error('Write a player turn between 1 and 16000 characters.');
   const base = options.reroll ? { ...session, turns: session.turns.slice(0, -1) } : session;
+
+  // Phase 2 deliberately separates resolution/state authority from prose rendering.
+  // The current resolver is conservative: unsupported freeform physical claims are
+  // deferred instead of being guessed into world state.
+  options.onPhase?.('resolve');
+  const resolved = resolveV2PlayerTurn(base, { skipPersona });
+  const resolvedSession = resolved.session;
+
   options.onPhase?.('context');
-  const compiled = compileV2Context(base, player, skipPersona ? 'skip-persona' : 'normal');
+  const compiled = compileV2Context(resolvedSession, player, skipPersona ? 'skip-persona' : 'normal', resolved.resolution);
   options.onPhase?.('generate');
   const result = await provider.generate({
     prompt: compiled.prompt, model: session.launch.model,
@@ -105,7 +114,8 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   const canNormalize = result.metadata.completionStatus !== 'max_tokens' && rawIssues.length === 0 && decodedIssues.length === 0;
   const normalizedReply = canNormalize ? normalizeV2RoleplayFormat(decodedReply) : decodedReply;
   const issues = [...new Set([...rawIssues, ...decodedIssues, ...validateV2Reply(normalizedReply, session.launch.persona.name)])];
-  const warnings = ['Semantic canon validation and automatic action resolution are not implemented yet. Prose cannot commit physical state.'];
+  const warnings = ['Semantic canon claim validation is not complete. Generated prose remains downstream of and non-authoritative over physical state.'];
+  if (resolved.resolution.status === 'deferred') warnings.push(...resolved.resolution.deferredClaims);
   if (skipPersona) warnings.push('The player persona turn was explicitly skipped. The renderer was forbidden from inventing a player action or decision.');
   if (decodedReply !== rawReply) warnings.push('Serialized roleplay escape sequences were decoded before commit.');
   if (canNormalize && normalizedReply !== decodedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
@@ -115,7 +125,11 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
     prompt: compiled.prompt, included: compiled.included, omitted: compiled.omitted,
     estimatedInputTokens: compiled.estimatedInputTokens, outputBudget: compiled.outputBudget,
     issues, warnings, model: session.launch.model, durationMs: result.metadata.durationMs,
-    completionStatus: result.metadata.completionStatus ?? 'unknown', worldRevision: session.world.revision,
+    completionStatus: result.metadata.completionStatus ?? 'unknown', worldRevision: resolvedSession.world.revision,
+    viewpointActorId: resolved.resolution.playerActorId,
+    subjectActorId: resolved.resolution.subjectActorId,
+    resolutionStatus: resolved.resolution.status,
+    resolutionDeferredClaims: [...resolved.resolution.deferredClaims],
     providerKind: result.metadata.provider, providerEndpoint: result.metadata.endpoint, requestId: result.metadata.requestId,
     finishReason: result.metadata.finishReason, requestedMaxTokens: result.metadata.requestedMaxTokens,
     providerInputTokensEstimate: result.metadata.inputTokensEstimate,
@@ -129,13 +143,13 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   if (issues.length) throw new V2DraftRejected(`Draft rejected: ${issues.join(' ')}`, diagnostics);
   const at = options.now ?? Date.now();
   const id = options.reroll ? last!.id : `v2:${session.id}:${session.nextTurn}`;
-  const turn: V2Turn = { id, player, reply: normalizedReply, createdAt: options.reroll ? last!.createdAt : at, worldRevision: session.world.revision, diagnostics };
+  const turn: V2Turn = { id, player, reply: normalizedReply, createdAt: options.reroll ? last!.createdAt : at, worldRevision: resolvedSession.world.revision, diagnostics };
   options.onPhase?.('commit');
   return {
-    ...session, draft: options.reroll || skipPersona ? session.draft : '', turns: [...base.turns, turn],
+    ...resolvedSession, draft: options.reroll || skipPersona ? session.draft : '', turns: [...resolvedSession.turns, turn],
     nextTurn: session.nextTurn + (options.reroll ? 0 : 1),
     events: options.reroll
       ? session.events.map((event) => event.id === id ? { ...event, label: skipPersona ? 'Reply rerolled / persona skipped' : 'Reply rerolled', at } : event)
-      : [...session.events, { id, kind: 'turn', label: skipPersona ? 'Reply committed / persona skipped' : 'Reply committed', worldRevision: session.world.revision, at }],
+      : [...resolvedSession.events, { id, kind: 'turn', label: skipPersona ? 'Reply committed / persona skipped' : 'Reply committed', worldRevision: resolvedSession.world.revision, at }],
   };
 }
