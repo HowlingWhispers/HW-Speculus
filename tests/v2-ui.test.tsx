@@ -19,12 +19,15 @@ describe('V2 terminal interaction', () => {
   });
   it('identifies and stages a raw V2 save without treating it as authorization', async () => {
     const value = createV2Session(publicV2Package(v2Package()));
+    const raw = exportV2Session(value);
+    const file = new File([raw], 'save.json', { type: 'application/json' });
+    Object.defineProperty(file, 'text', { value: async () => raw });
     render(<V2App />);
     await screen.findByText('Open a simulation or load a save');
     const input = screen.getByLabelText('Load V2 raw save');
-    fireEvent.change(input, { target: { files: [new File([exportV2Session(value)], 'save.json', { type: 'application/json' })] } });
+    fireEvent.change(input, { target: { files: [file] } });
     expect(await screen.findByText('Save identified')).toBeInTheDocument();
-    expect(screen.getByText(/Raw save is staged|raw save is staged/i)).toBeInTheDocument();
+    expect(screen.getByText(/raw save is staged/i)).toBeInTheDocument();
     expect(sessionStorage.getItem('speculus.pending-import.v2')).not.toContain(value.launch.launchId);
     expect(screen.queryByLabelText('Your next turn')).not.toBeInTheDocument();
   });
