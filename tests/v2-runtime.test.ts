@@ -5,6 +5,7 @@ import { createV2Session, deleteLastTurn, operateWorld, OUTPUT_PRESETS } from '.
 import { compileV2Context, CONTEXT_CHARACTER_BUDGET } from '../src/v2/runtime/context';
 import { generateV2Turn, V2DraftRejected, validateV2Reply } from '../src/v2/runtime/engine';
 import { resolveV2PlayerTurn } from '../src/v2/runtime/resolution';
+import { resolveTemporalIntent } from '../src/v2/runtime/temporal';
 import { perceptionFor } from '../src/v2/runtime/world';
 import { exportV2Session, importV2Session } from '../src/v2/storage/session';
 import { v2Package } from './v2-fixtures';
@@ -13,7 +14,7 @@ const session = () => ({ ...createV2Session(publicV2Package(v2Package())), draft
 const adapter = (text = '*Peony looks up.* "Hello."', status: 'completed' | 'max_tokens' = 'completed') => ({ kind: 'mock', generate: vi.fn(async () => ({ text, metadata: { provider: 'mock' as const, model: 'xialong-v1', endpoint: 'mock', durationMs: 1, completionStatus: status } })) }) satisfies ProviderAdapter;
 
 describe('isolated V2 world and cognition', () => {
-  it('does not invent a place, time of day or character presence', () => {
+  it('does not invent a place, initial time of day or character presence', () => {
     const value = session();
     expect(value.world.locationId).toBeNull(); expect(value.world.elapsedSeconds).toBe(0);
     expect(perceptionFor(value.world, value.launch.character!.id).presentActors).toEqual([]);
@@ -34,52 +35,75 @@ describe('isolated V2 world and cognition', () => {
     expect(operateWorld(learned, { type: 'advance-clock', seconds: 60 }).world.elapsedSeconds).toBe(60);
     for (const seconds of [-1, 0, 0.5, Infinity, 86401]) expect(() => operateWorld(learned, { type: 'advance-clock', seconds })).toThrow();
   });
-  it('creates a player-perspective resolution packet without trusting prose as state', () => {
+  it('resolves elapsed time before rendering without trusting prose as movement or canon', () => {
     const value = session();
     const before = structuredClone(value.world);
-    const resolved = resolveV2PlayerTurn(value);
-    expect(resolved.session.world).toEqual(before);
-    expect(resolved.resolution.status).toBe('deferred');
+    const resolved = resolveV2PlayerTurn(value, value.draft);
+    expect(value.world).toEqual(before);
+    expect(resolved.session.world.elapsedSeconds).toBe(30);
+    expect(resolved.resolution.status).toBe('resolved');
     expect(resolved.resolution.playerActorId).toBe(value.launch.persona.id);
     expect(resolved.resolution.subjectActorId).toBe(value.launch.character!.id);
     expect(resolved.resolution.worldRevisionBefore).toBe(value.world.revision);
-    expect(resolved.resolution.worldRevisionAfter).toBe(value.world.revision);
-    expect(resolved.resolution.appliedActions).toEqual([]);
-    expect(resolved.resolution.deferredClaims.join(' ')).toContain('not converted into authoritative movement');
+    expect(resolved.resolution.worldRevisionAfter).toBe(value.world.revision + 1);
+    expect(resolved.resolution.appliedActions).toEqual(['elapsed:turn:30s']);
+    expect(resolved.resolution.deferredClaims.join(' ')).toContain('Movement');
+  });
+  it('recognizes natural sleep prose, advances the night and creates a narrative-dice result', () => {
+    const intent = resolveTemporalIntent('*I closed my eyes and drifted off to sleep.*', () => 0.5);
+    expect(intent.kind).toBe('sleep');
+    expect(intent.seconds).toBe(8 * 3600);
+    expect(intent.check?.kind).toBe('genesys-style');
+    const value = { ...session(), draft: '*I closed my eyes and drifted off to sleep.*' };
+    const resolved = resolveV2PlayerTurn(value, value.draft, { random: () => 0.5 });
+    expect(resolved.session.world.elapsedSeconds).toBe(8 * 3600);
+    expect(resolved.resolution.narrativeCheck).toBeTruthy();
+  });
+  it('honors explicit durations and short rest phrasing', () => {
+    expect(resolveTemporalIntent('*I wait for two hours.*').seconds).toBe(7200);
+    expect(resolveTemporalIntent('*I sat by the fire for a while.*').seconds).toBe(900);
+    expect(resolveTemporalIntent('*I take a nap for 30 minutes.*', () => 0.5).seconds).toBe(1800);
   });
 });
 
 describe('V2 generation transaction', () => {
-  it('forwards every native setting, resolves before rendering, commits one stable event, and leaves unsupported prose out of world state', async () => {
+  it('forwards every native setting, resolves time before rendering, commits stable resolution state, and leaves unsupported prose out of canon', async () => {
     const value = session(); const provider = adapter(); const phases: string[] = [];
     value.settings = { ...value.settings, maxTokens: 1024, temperature: 0.7, topK: 50, topP: 0.8, presencePenalty: 0.2, frequencyPenalty: 0.3, stopSequences: ['END'], continueToEndOfSentence: false };
     const before = structuredClone(value);
     const next = await generateV2Turn(value, provider, { onPhase: (phase) => phases.push(phase) });
-    expect(value).toEqual(before); expect(next.world).toEqual(value.world);
-    expect(next.turns).toHaveLength(1); expect(next.events).toHaveLength(1); expect(next.draft).toBe('');
+    expect(value).toEqual(before); expect(next.world.elapsedSeconds).toBe(30);
+    expect(next.turns).toHaveLength(1); expect(next.events).toHaveLength(2); expect(next.draft).toBe('');
+    expect(next.events[0].kind).toBe('operator'); expect(next.events[0].id).toContain(':resolution');
     expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 1024, temperature: 0.7, topK: 50, topP: 0.8, presencePenalty: 0.2, frequencyPenalty: 0.3, continueToEndOfSentence: false, stopSequences: ['END'] }));
     expect(phases).toEqual(['resolve', 'context', 'generate', 'validate', 'commit']);
     const request = provider.generate.mock.calls[0] as unknown as [ProviderRequest];
     expect(request[0].stopSequences).toEqual(['END']);
     expect(request[0].prompt).toContain('PLAYER-PERSPECTIVE WORLD RENDERING CONTRACT');
     expect(request[0].prompt).toContain('TURN RESOLUTION / ENGINE AUTHORITY');
+    expect(request[0].prompt).toContain('"elapsedSeconds":30');
     expect(request[0].prompt).toContain('Do not prefix it with a speaker name');
     expect(request[0]).not.toHaveProperty('world'); expect(request[0]).not.toHaveProperty('generationGrant');
     expect(next.turns[0].diagnostics.viewpointActorId).toBe(value.launch.persona.id);
     expect(next.turns[0].diagnostics.subjectActorId).toBe(value.launch.character!.id);
-    expect(next.turns[0].diagnostics.resolutionStatus).toBe('deferred');
+    expect(next.turns[0].diagnostics.resolutionStatus).toBe('resolved');
+    expect(next.turns[0].diagnostics.resolutionElapsedSeconds).toBe(30);
   });
-  it('rerolls replace the latest event and preserve an unsent draft; deletion removes the event', async () => {
+  it('rerolls reuse the resolved clock, preserve an unsent draft, and deletion rolls the automatic clock back', async () => {
     const first = await generateV2Turn(session(), adapter()); first.draft = 'Unsent words';
+    const elapsed = first.world.elapsedSeconds;
     const second = await generateV2Turn(first, adapter('"A different reply."'), { reroll: true });
     expect(second.turns).toHaveLength(1); expect(second.turns[0].id).toBe(first.turns[0].id);
-    expect(second.events).toHaveLength(1); expect(second.nextTurn).toBe(first.nextTurn); expect(second.draft).toBe('Unsent words');
-    const removed = deleteLastTurn(second); expect(removed.turns).toEqual([]); expect(removed.events).toEqual([]); expect(removed.world).toEqual(second.world);
+    expect(second.events).toHaveLength(2); expect(second.nextTurn).toBe(first.nextTurn); expect(second.draft).toBe('Unsent words');
+    expect(second.world.elapsedSeconds).toBe(elapsed);
+    const removed = deleteLastTurn(second);
+    expect(removed.turns).toEqual([]); expect(removed.events).toEqual([]); expect(removed.world.elapsedSeconds).toBe(0);
   });
-  it('rejects reroll across a state change instead of rewriting its history', async () => {
+  it('rejects reroll and deletion across a later state change instead of rewriting history', async () => {
     const first = await generateV2Turn(session(), adapter());
     const changed = operateWorld(first, { type: 'advance-clock', seconds: 60 });
     await expect(generateV2Turn(changed, adapter(), { reroll: true })).rejects.toThrow('unchanged world state');
+    expect(() => deleteLastTurn(changed)).toThrow('unchanged world state');
   });
   it('does not commit a rejected, failed, cancelled or expired generation', async () => {
     const value = session(); const copy = structuredClone(value);
@@ -107,7 +131,8 @@ describe('V2 bounded context', () => {
   it('keeps a 200-turn deterministic run bounded and round-trips its ledger without leaking authorization', async () => {
     let value = session(); const provider = adapter();
     for (let i = 0; i < 200; i += 1) value = await generateV2Turn({ ...value, draft: `"Test turn ${i + 1}."` }, provider);
-    expect(value.turns).toHaveLength(200); expect(value.events).toHaveLength(200);
+    expect(value.turns).toHaveLength(200); expect(value.events).toHaveLength(400);
+    expect(value.world.elapsedSeconds).toBe(200 * 30);
     expect(value.turns.at(-1)!.diagnostics.prompt.length).toBeLessThanOrEqual(CONTEXT_CHARACTER_BUDGET);
     expect(value.turns.at(-1)!.diagnostics.omitted.join(' ')).toContain('older exchange(s)');
     const raw = exportV2Session(value); expect(raw).not.toContain(value.launch.launchId); expect(raw).not.toContain('generationGrant');
