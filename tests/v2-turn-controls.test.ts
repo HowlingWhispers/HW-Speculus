@@ -31,8 +31,9 @@ describe('V2 operator turn controls', () => {
     expect(request[0].prompt).not.toContain(`[PLAYER INPUT]\n${SKIPPED_PERSONA_TURN}`);
   });
 
-  it('impersonates only the player persona and returns the result to the composer path without a commit phase', async () => {
+  it('impersonates only the player persona and returns the result to an empty composer path without a commit phase', async () => {
     const value = session();
+    value.draft = '';
     const provider = adapter('*I fold my arms.* "Fine."');
     const phases: string[] = [];
     const draft = await generateV2PersonaDraft(value, provider, { onPhase: (phase) => phases.push(phase) });
@@ -44,8 +45,28 @@ describe('V2 operator turn controls', () => {
     expect(request[0].prompt).toContain('Do not write, continue, react for, or impersonate the character or simulation narrator.');
   });
 
+  it('uses an existing composer draft as fixed context and appends only the generated continuation', async () => {
+    const value = session();
+    value.draft = '*At sundown*';
+    const provider = adapter('*I tighten my cloak.* "Time to go."');
+    const draft = await generateV2PersonaDraft(value, provider);
+    expect(draft).toBe('*At sundown*\n*I tighten my cloak.* "Time to go."');
+    const request = provider.generate.mock.calls[0] as unknown as [ProviderRequest];
+    expect(request[0].prompt).toContain('player composer already contains');
+    expect(request[0].prompt).toContain('*At sundown*');
+    expect(request[0].prompt).toContain('Generate only the new continuation');
+  });
+
+  it('does not duplicate an existing composer prefix when the provider echoes it anyway', async () => {
+    const value = session();
+    value.draft = '*At sundown*';
+    const draft = await generateV2PersonaDraft(value, adapter('*At sundown* *I head for the gate.*'));
+    expect(draft).toBe('*At sundown*\n*I head for the gate.*');
+  });
+
   it('rejects a player impersonation draft that starts writing the character turn', async () => {
     const value = session();
+    value.draft = '';
     await expect(generateV2PersonaDraft(value, adapter('*Peony steps closer.* "No."'))).rejects.toThrow('character turn');
   });
 });
