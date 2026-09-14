@@ -4,6 +4,7 @@ import type { ProviderAdapter, ProviderRequest } from '../src/runtime/providers/
 import { createV2Session, deleteLastTurn, operateWorld, OUTPUT_PRESETS } from '../src/v2/runtime/session';
 import { compileV2Context, CONTEXT_CHARACTER_BUDGET } from '../src/v2/runtime/context';
 import { generateV2Turn, V2DraftRejected, validateV2Reply } from '../src/v2/runtime/engine';
+import { resolveV2PlayerTurn } from '../src/v2/runtime/resolution';
 import { perceptionFor } from '../src/v2/runtime/world';
 import { exportV2Session, importV2Session } from '../src/v2/storage/session';
 import { v2Package } from './v2-fixtures';
@@ -33,10 +34,23 @@ describe('isolated V2 world and cognition', () => {
     expect(operateWorld(learned, { type: 'advance-clock', seconds: 60 }).world.elapsedSeconds).toBe(60);
     for (const seconds of [-1, 0, 0.5, Infinity, 86401]) expect(() => operateWorld(learned, { type: 'advance-clock', seconds })).toThrow();
   });
+  it('creates a player-perspective resolution packet without trusting prose as state', () => {
+    const value = session();
+    const before = structuredClone(value.world);
+    const resolved = resolveV2PlayerTurn(value);
+    expect(resolved.session.world).toEqual(before);
+    expect(resolved.resolution.status).toBe('deferred');
+    expect(resolved.resolution.playerActorId).toBe(value.launch.persona.id);
+    expect(resolved.resolution.subjectActorId).toBe(value.launch.character!.id);
+    expect(resolved.resolution.worldRevisionBefore).toBe(value.world.revision);
+    expect(resolved.resolution.worldRevisionAfter).toBe(value.world.revision);
+    expect(resolved.resolution.appliedActions).toEqual([]);
+    expect(resolved.resolution.deferredClaims.join(' ')).toContain('not converted into authoritative movement');
+  });
 });
 
 describe('V2 generation transaction', () => {
-  it('forwards every native setting, commits one stable event, and leaves world state unchanged', async () => {
+  it('forwards every native setting, resolves before rendering, commits one stable event, and leaves unsupported prose out of world state', async () => {
     const value = session(); const provider = adapter(); const phases: string[] = [];
     value.settings = { ...value.settings, maxTokens: 1024, temperature: 0.7, topK: 50, topP: 0.8, presencePenalty: 0.2, frequencyPenalty: 0.3, stopSequences: ['END'], continueToEndOfSentence: false };
     const before = structuredClone(value);
@@ -44,11 +58,16 @@ describe('V2 generation transaction', () => {
     expect(value).toEqual(before); expect(next.world).toEqual(value.world);
     expect(next.turns).toHaveLength(1); expect(next.events).toHaveLength(1); expect(next.draft).toBe('');
     expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({ maxTokens: 1024, temperature: 0.7, topK: 50, topP: 0.8, presencePenalty: 0.2, frequencyPenalty: 0.3, continueToEndOfSentence: false, stopSequences: ['END'] }));
-    expect(phases).toEqual(['context', 'generate', 'validate', 'commit']);
+    expect(phases).toEqual(['resolve', 'context', 'generate', 'validate', 'commit']);
     const request = provider.generate.mock.calls[0] as unknown as [ProviderRequest];
     expect(request[0].stopSequences).toEqual(['END']);
+    expect(request[0].prompt).toContain('PLAYER-PERSPECTIVE WORLD RENDERING CONTRACT');
+    expect(request[0].prompt).toContain('TURN RESOLUTION / ENGINE AUTHORITY');
     expect(request[0].prompt).toContain('Do not prefix it with a speaker name');
     expect(request[0]).not.toHaveProperty('world'); expect(request[0]).not.toHaveProperty('generationGrant');
+    expect(next.turns[0].diagnostics.viewpointActorId).toBe(value.launch.persona.id);
+    expect(next.turns[0].diagnostics.subjectActorId).toBe(value.launch.character!.id);
+    expect(next.turns[0].diagnostics.resolutionStatus).toBe('deferred');
   });
   it('rerolls replace the latest event and preserve an unsent draft; deletion removes the event', async () => {
     const first = await generateV2Turn(session(), adapter()); first.draft = 'Unsent words';
@@ -94,12 +113,20 @@ describe('V2 bounded context', () => {
     const raw = exportV2Session(value); expect(raw).not.toContain(value.launch.launchId); expect(raw).not.toContain('generationGrant');
     const restored = importV2Session(raw, session()); expect(restored.turns).toEqual(value.turns); expect(restored.events).toEqual(value.events);
   });
-  it('keeps output presets separate from context capacity and does not inject another actor knowledge', () => {
-    const value = session(); value.world.actors[0].knowledge = ['PLAYER PRIVATE MEMORY'];
+  it('keeps output presets separate from context capacity and keeps player and subject perception distinct', () => {
+    const value = session();
+    const player = value.world.actors.find((actor) => actor.role === 'player')!;
+    const subject = value.world.actors.find((actor) => actor.role === 'character')!;
+    player.knowledge = ['PLAYER PRIVATE MEMORY'];
+    subject.knowledge = ['SUBJECT PRIVATE MEMORY'];
     for (const [output, maxTokens] of Object.entries(OUTPUT_PRESETS)) {
       const packet = compileV2Context({ ...value, settings: { ...value.settings, output: output as keyof typeof OUTPUT_PRESETS, maxTokens } }, value.draft);
       expect(packet.prompt.length).toBeLessThanOrEqual(CONTEXT_CHARACTER_BUDGET);
-      expect(packet.outputBudget).toBe(maxTokens); expect(packet.prompt).not.toContain('PLAYER PRIVATE MEMORY');
+      expect(packet.outputBudget).toBe(maxTokens);
+      expect(packet.perception.knownFacts).toEqual(['PLAYER PRIVATE MEMORY']);
+      expect(packet.subjectPerception?.knownFacts).toEqual(['SUBJECT PRIVATE MEMORY']);
+      expect(packet.prompt).toContain('PLAYER PERCEPTION / OUTPUT VIEW');
+      expect(packet.prompt).toContain('AUTHORIZED SUBJECT LOCAL CONTEXT / BEHAVIOR ONLY / NOT OUTPUT AUTHORITY');
     }
   });
   it('includes influences, exposes omissions and refuses oversized mandatory input before sending', () => {
