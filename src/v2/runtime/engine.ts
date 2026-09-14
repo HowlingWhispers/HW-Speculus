@@ -114,12 +114,14 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   const canNormalize = result.metadata.completionStatus !== 'max_tokens' && rawIssues.length === 0 && decodedIssues.length === 0;
   const normalizedReply = canNormalize ? normalizeV2RoleplayFormat(decodedReply) : decodedReply;
   const issues = [...new Set([...rawIssues, ...decodedIssues, ...validateV2Reply(normalizedReply, session.launch.persona.name)])];
+  if (result.metadata.completionStatus === 'max_tokens') {
+    issues.push('The provider reached the hard output ceiling. The cut-off reply was discarded instead of being committed.');
+  }
   const warnings = ['Semantic canon claim validation is not complete. Generated prose remains downstream of and non-authoritative over physical state.'];
   if (resolved.resolution.status === 'deferred') warnings.push(...resolved.resolution.deferredClaims);
   if (skipPersona) warnings.push('The player persona turn was explicitly skipped. The renderer was forbidden from inventing a player action or decision.');
   if (decodedReply !== rawReply) warnings.push('Serialized roleplay escape sequences were decoded before commit.');
   if (canNormalize && normalizedReply !== decodedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
-  if (result.metadata.completionStatus === 'max_tokens') warnings.push('The provider reached the output limit. The reply was not locally truncated or structurally completed. Increase the budget and reroll if needed.');
   if (compiled.omitted.length) warnings.push('Some history/canon was omitted. Inspect the Context tab for the exact list.');
   const diagnostics: V2Diagnostics = {
     prompt: compiled.prompt, included: compiled.included, omitted: compiled.omitted,
