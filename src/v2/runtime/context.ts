@@ -3,8 +3,6 @@ import type { V2TurnResolution } from './resolution';
 import { SKIPPED_PERSONA_TURN } from './turn-control';
 import { assetsFor, perceptionFor } from './world';
 
-// A conservative, explicitly estimated prompt allowance, independent of output
-// presets. Exact model tokenization and semantic long-term recall are later work.
 export const CONTEXT_CHARACTER_BUDGET = 28_000;
 export type V2RenderMode = 'normal' | 'skip-persona' | 'impersonate-persona';
 const section = (title: string, value: unknown) => `\n[${title}]\n${typeof value === 'string' ? value : JSON.stringify(value)}\n`;
@@ -58,7 +56,8 @@ export function compileV2Context(
     'Render the current simulated world through the player persona\'s perceptual viewpoint. The authorized subject may act, but the prose camera belongs to the player.',
     'The renderer is downstream from world resolution. It may describe state and observable consequences, but it is not allowed to make generated prose authoritative state.',
     'The engine owns physical locations, elapsed time and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
-    'Do not invent named places, teleport actors, advance the clock, close the scene, or write actions, thoughts, dialogue, consent, decisions or movement for the player.',
+    'Do not invent named places, teleport actors, independently advance the clock, close the scene, or write actions, thoughts, dialogue, consent, decisions or movement for the player.',
+    'When TURN RESOLUTION reports elapsed time or a narrative check, render consequences consistent with that engine result without changing the result.',
     'Only explicitly present actors can interact. Related canon is not automatically known, perceived or physically present.',
     'Authorized-subject private context may guide behavior, but must never be exposed as narration unless the player can perceive its outward evidence or already knows it.',
     'Do not narrate NPC private thoughts, hidden motives, offscreen events or unseen facts as player-visible truth.',
@@ -89,7 +88,7 @@ export function compileV2Context(
       ? section('CHARACTER OR NARRATOR / NEVER IMPERSONATE', launch.character ?? { name: 'SIMULATION NARRATOR' })
       : section('PLAYER PERSONA / OUTPUT VIEWPOINT / NEVER IMPERSONATE', launch.persona))
     + section('AUTHORED SCENE', launch.scene)
-    + section('ENGINE STATE / READ ONLY', { revision: world.revision, elapsedSeconds: world.elapsedSeconds, locationId: world.locationId, locationLabel: assetsFor(launch).find((asset) => asset.id === world.locationId)?.name ?? null, actors: world.actors.map(({ knowledge: _private, ...actor }) => actor) })
+    + section('ENGINE STATE / READ ONLY', { revision: world.revision, elapsedSeconds: world.elapsedSeconds, simulationDay: Math.floor(world.elapsedSeconds / 86400) + 1, locationId: world.locationId, locationLabel: assetsFor(launch).find((asset) => asset.id === world.locationId)?.name ?? null, actors: world.actors.map(({ knowledge: _private, ...actor }) => actor) })
     + section('PLAYER PERCEPTION / OUTPUT VIEW', playerPerception);
 
   if (!impersonatingPersona && subjectPerception) {
@@ -102,17 +101,15 @@ export function compileV2Context(
       status: resolution.status,
       worldRevisionBefore: resolution.worldRevisionBefore,
       worldRevisionAfter: resolution.worldRevisionAfter,
+      elapsedSeconds: resolution.elapsedSeconds,
       appliedActions: resolution.appliedActions,
+      narrativeCheck: resolution.narrativeCheck ?? null,
       deferredClaims: resolution.deferredClaims,
     });
     included.push('Turn resolution');
   }
 
   const influence = section('STYLE INFLUENCE / NOT STATE AUTHORITY', { tags: settings.tags, freeform: settings.freeform });
-  // Both normal rendering and player impersonation deliberately end on the same
-  // response anchor. The Orbis sentence-control bridge recognizes this marker and
-  // keeps its control text before the response boundary instead of appending it
-  // after the persona draft marker, which could leave NovelAI nothing to continue.
   const input = impersonatingPersona
     ? section('OPERATOR REQUEST', `Draft only ${launch.persona.name}'s next player turn. Do not write the character or narrator.`) + '\n[IN-WORLD RESPONSE]\n'
     : skippingPersona
@@ -122,8 +119,6 @@ export function compileV2Context(
     throw new Error('Essential scene/state and input exceed the V2 context allowance. Nothing was cut or sent. Shorten the setup/input before retrying.');
   }
 
-  // Recent dialogue is intentionally kept as plain roleplay text. Serializing it
-  // as JSON teaches the model to imitate escaped quotes/newlines in later turns.
   const recent = session.turns.slice(-4).map((turn) => '\n[RECENT EXCHANGE / NOT ENGINE AUTHORITY]\n'
     + (turn.player === SKIPPED_PERSONA_TURN
       ? '[PLAYER TURN]\n(skipped by operator)\n'
