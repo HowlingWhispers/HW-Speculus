@@ -102,7 +102,7 @@ export function V2App() {
         setTranscriptDetached(false);
       }
     };
-    sendState();
+    channel.postMessage({ type: 'probe', sessionId: session.id } satisfies DetachedTranscriptMessage);
     return () => {
       channel.close();
       if (detachedChannel.current === channel) detachedChannel.current = null;
@@ -112,7 +112,7 @@ export function V2App() {
   useEffect(() => {
     if (!session || !transcriptDetached) return;
     detachedChannel.current?.postMessage({ type: 'state', sessionId: session.id, session, busy } satisfies DetachedTranscriptMessage);
-  }, [session, busy, transcriptDetached]);
+  }, [session?.turns, session?.settings.actionColor, session?.settings.dialogueColor, session?.settings.thoughtColor, session?.settings.crtEffects, busy, transcriptDetached]);
 
   useEffect(() => {
     if (!transcriptDetached) return;
