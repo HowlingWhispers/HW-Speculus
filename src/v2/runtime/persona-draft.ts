@@ -28,6 +28,9 @@ export async function generateV2PersonaDraft(session: V2Session, provider: Provi
   const raw = result.text.trim();
   const decoded = decodeV2SerializedRoleplayArtifacts(raw);
   if (!decoded) throw new Error('The model returned an empty player draft.');
+  if (result.metadata.completionStatus === 'max_tokens') {
+    throw new Error('The generated player draft reached the hard output ceiling and was discarded instead of inserting a cut-off turn. Try again or use a larger output preset.');
+  }
   if (decoded.length > 16000) throw new Error('The generated player draft exceeds the composer limit.');
   if (/<\|(?:user|assistant|system|im_start|im_end)\|>|<\/?(?:world_state|state_patch|analysis)>/i.test(decoded)) {
     throw new Error('The generated player draft exposed control data and was rejected.');
@@ -47,5 +50,5 @@ export async function generateV2PersonaDraft(session: V2Session, provider: Provi
   if (/^\s*(?:SIMULATION NARRATOR|NARRATOR)\s*:/im.test(decoded)) {
     throw new Error('The generated player draft tried to write the narrator turn.');
   }
-  return result.metadata.completionStatus === 'max_tokens' ? decoded : normalizeV2RoleplayFormat(decoded);
+  return normalizeV2RoleplayFormat(decoded);
 }
