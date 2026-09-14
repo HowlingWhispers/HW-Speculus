@@ -1,8 +1,9 @@
 import type { V2Session } from './session';
-import { perceptionFor } from './world';
+import { resolveTemporalIntent, type NarrativeDiceResult } from './temporal';
+import { applyWorldAction, perceptionFor } from './world';
 
-export const V2_RESOLUTION_SCHEMA = 'speculus-v2-turn-resolution/1' as const;
-export type V2ResolutionStatus = 'authoritative-noop' | 'deferred';
+export const V2_RESOLUTION_SCHEMA = 'speculus-v2-turn-resolution/2' as const;
+export type V2ResolutionStatus = 'authoritative-noop' | 'resolved' | 'deferred';
 
 export type V2TurnResolution = {
   schemaVersion: typeof V2_RESOLUTION_SCHEMA;
@@ -11,46 +12,66 @@ export type V2TurnResolution = {
   subjectActorId: string | null;
   worldRevisionBefore: number;
   worldRevisionAfter: number;
+  elapsedSeconds: number;
   appliedActions: string[];
   deferredClaims: string[];
+  narrativeCheck?: NarrativeDiceResult;
   playerPerception: ReturnType<typeof perceptionFor>;
   subjectPerception: ReturnType<typeof perceptionFor> | null;
 };
 
 /**
- * Phase-2 resolution boundary.
+ * Trusted V2 turn-resolution boundary.
  *
- * Freeform prose is not trusted to mutate authoritative physical state. Until the
- * movement graph and semantic action resolver exist, normal player prose is
- * explicitly deferred rather than guessed into locations, time or presence.
- * This still gives the generation transaction a real resolve -> state ->
- * perception boundary and prevents the renderer from being the state authority.
+ * Freeform prose is still never allowed to author places, presence or canon. A
+ * deliberately narrow temporal interpreter may, however, recognize elapsed-time
+ * intent and commit it before prose rendering. Unsupported physical claims remain
+ * deferred rather than guessed into authoritative state.
  */
-export function resolveV2PlayerTurn(session: V2Session, options: { skipPersona?: boolean } = {}): {
-  session: V2Session;
-  resolution: V2TurnResolution;
-} {
+export function resolveV2PlayerTurn(
+  session: V2Session,
+  player = '',
+  options: { skipPersona?: boolean; reroll?: boolean; random?: () => number } = {},
+): { session: V2Session; resolution: V2TurnResolution } {
   const playerActorId = session.launch.persona.id;
   const subjectActorId = session.launch.character?.id ?? null;
-  const revision = session.world.revision;
+  const before = session.world.revision;
   const skipped = options.skipPersona === true;
+  const reroll = options.reroll === true;
 
+  let resolvedSession = session;
+  let appliedActions: string[] = [];
+  let narrativeCheck: NarrativeDiceResult | undefined;
+  let elapsedSeconds = 0;
+  const deferredClaims: string[] = [];
+
+  if (!skipped && !reroll) {
+    const temporal = resolveTemporalIntent(player, options.random);
+    elapsedSeconds = temporal.seconds;
+    narrativeCheck = temporal.check;
+    const world = applyWorldAction(session.world, { type: 'advance-clock', seconds: temporal.seconds }, session.launch);
+    resolvedSession = { ...session, world };
+    appliedActions = [temporal.label];
+    deferredClaims.push('Movement, presence changes, resource use and other unsupported physical claims remain deferred unless an authoritative resolver handles them.');
+  }
+
+  const after = resolvedSession.world.revision;
+  const status: V2ResolutionStatus = skipped || reroll ? 'authoritative-noop' : appliedActions.length ? 'resolved' : 'deferred';
   return {
-    session,
+    session: resolvedSession,
     resolution: {
       schemaVersion: V2_RESOLUTION_SCHEMA,
-      status: skipped ? 'authoritative-noop' : 'deferred',
+      status,
       playerActorId,
       subjectActorId,
-      worldRevisionBefore: revision,
-      worldRevisionAfter: revision,
-      appliedActions: [],
-      deferredClaims: skipped ? [] : [
-        'Freeform player prose was not converted into authoritative movement, elapsed time, presence or canon changes.',
-        'Physical action resolution remains deferred until trusted semantic resolution and spacetime rules can validate it.',
-      ],
-      playerPerception: perceptionFor(session.world, playerActorId),
-      subjectPerception: subjectActorId ? perceptionFor(session.world, subjectActorId) : null,
+      worldRevisionBefore: before,
+      worldRevisionAfter: after,
+      elapsedSeconds,
+      appliedActions,
+      deferredClaims,
+      narrativeCheck,
+      playerPerception: perceptionFor(resolvedSession.world, playerActorId),
+      subjectPerception: subjectActorId ? perceptionFor(resolvedSession.world, subjectActorId) : null,
     },
   };
 }
