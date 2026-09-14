@@ -15,16 +15,20 @@ export function V2DetachedTranscript({ sessionId }: { sessionId: string }) {
     const announceReady = () => channel.postMessage({ type: 'ready', sessionId } satisfies DetachedTranscriptMessage);
     channel.onmessage = (event: MessageEvent<DetachedTranscriptMessage>) => {
       const message = event.data;
-      if (!message || message.sessionId !== sessionId || message.type !== 'state') return;
-      setSession(message.session);
-      setBusy(message.busy);
+      if (!message || message.sessionId !== sessionId) return;
+      if (message.type === 'probe') {
+        announceReady();
+        return;
+      }
+      if (message.type === 'state') {
+        setSession(message.session);
+        setBusy(message.busy);
+      }
     };
     announceReady();
-    const heartbeat = window.setInterval(announceReady, 2000);
     const announceClosed = () => channel.postMessage({ type: 'closed', sessionId } satisfies DetachedTranscriptMessage);
     window.addEventListener('beforeunload', announceClosed);
     return () => {
-      window.clearInterval(heartbeat);
       window.removeEventListener('beforeunload', announceClosed);
       channel.close();
     };
