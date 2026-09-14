@@ -49,7 +49,9 @@ export function resolveV2PlayerTurn(
     const temporal = resolveTemporalIntent(player, options.random);
     elapsedSeconds = temporal.seconds;
     narrativeCheck = temporal.check;
-    const world = applyWorldAction(session.world, { type: 'advance-clock', seconds: temporal.seconds }, session.launch);
+    const world = applyWorldAction(session.world, {
+      type: 'advance-clock', seconds: temporal.seconds, days: temporal.dayAdvance,
+    }, session.launch);
     resolvedSession = { ...session, world };
     appliedActions = [temporal.label];
     deferredClaims.push('Movement, presence changes, resource use and other unsupported physical claims remain deferred unless an authoritative resolver handles them.');
