@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { saveV2LocalAutosave } from '../storage/autosave';
+import { loadLatestV2LocalAutosave, saveV2LocalAutosave } from '../storage/autosave';
 import { exportV2Session, loadV2Session, v2ExportFilename } from '../storage/session';
 import './autosave.css';
 
+const PENDING_IMPORT_KEY = 'speculus.pending-import.v2';
 type SaveState = 'standby' | 'saved' | 'fault';
 
 function signatureOf(session: NonNullable<ReturnType<typeof loadV2Session>>) {
@@ -14,6 +15,7 @@ export function V2AutosaveControls() {
   const [state, setState] = useState<SaveState>('standby');
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [hasSession, setHasSession] = useState(false);
+  const [recoveryLabel, setRecoveryLabel] = useState('');
   const lastSignature = useRef('');
 
   useEffect(() => {
@@ -21,7 +23,17 @@ export function V2AutosaveControls() {
       try {
         const session = loadV2Session();
         setHasSession(Boolean(session));
-        if (!session || session.turns.length === 0) return;
+        if (!session) {
+          const latest = loadLatestV2LocalAutosave();
+          if (latest) {
+            sessionStorage.setItem(PENDING_IMPORT_KEY, latest.raw);
+            setRecoveryLabel(latest.identity.name ?? latest.identity.world?.name ?? 'Speculus session');
+            setState('saved');
+          }
+          return;
+        }
+        setRecoveryLabel('');
+        if (session.turns.length === 0) return;
         const signature = signatureOf(session);
         if (signature === lastSignature.current) return;
         lastSignature.current = signature;
@@ -57,6 +69,11 @@ export function V2AutosaveControls() {
     }
   };
 
+  if (!hasSession && recoveryLabel) {
+    return <aside className="v2-autosave-dock v2-autosave-dock--saved" aria-live="polite">
+      <span>LOCAL AUTOSAVE STAGED · {recoveryLabel}</span>
+    </aside>;
+  }
   if (!hasSession) return null;
   const status = state === 'saved'
     ? `AUTOSAVE SAVED${savedAt ? ` ${new Date(savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`
