@@ -20,6 +20,7 @@ const sourceSchema = z.object({
   character: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
   exportedAt: z.number().int().positive().optional(),
   elapsedSeconds: z.number().int().nonnegative().optional(),
+  simulationDay: z.number().int().positive().optional(),
 });
 const transferSchema = stateSchema.extend({ format: z.literal(V2_EXPORT_FORMAT), source: sourceSchema });
 
@@ -91,6 +92,7 @@ export function exportV2Session(session: V2Session, now = Date.now()): string {
       character: session.launch.character ? { id: session.launch.character.id, name: session.launch.character.name } : null,
       exportedAt: now,
       elapsedSeconds: session.world.elapsedSeconds,
+      simulationDay: session.world.simulationDay,
     },
     ...state,
   }, null, 2);
