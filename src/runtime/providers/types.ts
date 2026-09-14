@@ -1,6 +1,7 @@
 import type { ProviderKind, SafeProviderMetadata } from '../schema/types.js';
 
 export type ProviderRequest = {
+  engine?: 'v1' | 'v2';
   prompt: string;
   model: string;
   temperature: number;
