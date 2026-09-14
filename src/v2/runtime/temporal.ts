@@ -10,6 +10,7 @@ export type NarrativeDiceResult = {
 export type TemporalIntent = {
   kind: 'turn' | 'explicit-duration' | 'sleep' | 'rest';
   seconds: number;
+  dayAdvance: number;
   label: string;
   check?: NarrativeDiceResult;
 };
@@ -74,20 +75,27 @@ export function rollRestCheck(random: () => number = Math.random): NarrativeDice
 export function resolveTemporalIntent(player: string, random: () => number = Math.random): TemporalIntent {
   const text = player.trim();
   const explicit = durationSeconds(text);
-  const sleep = /\b(?:sleep|slept|asleep|bed|doz(?:e|ed|ing)|nap(?:ped|ping)?|drift(?:ed|ing)?\s+off)\b/i.test(text)
+  const nap = /\b(?:nap(?:ped|ping)?|doz(?:e|ed|ing))\b/i.test(text);
+  const sleep = /\b(?:sleep|slept|asleep|nap(?:ped|ping)?|doz(?:e|ed|ing)|drift(?:ed|ing)?\s+off)\b/i.test(text)
+    || /\b(?:go|went|going|head|headed|heading|climb|climbed|climbing)\s+(?:to|into)\s+(?:my|their|his|her|the)?\s*bed\b/i.test(text)
     || /closed\s+(?:my|their|his|her)\s+eyes[^.!?]{0,80}(?:sleep|drift)/i.test(text);
 
   if (sleep) {
-    const seconds = explicit ?? (/\bnap\b|\bnapped\b|\bdoze\b/i.test(text) ? 3600 : 8 * 3600);
-    return { kind: 'sleep', seconds, label: explicit ? `sleep:${seconds}s` : `sleep:inferred:${seconds}s`, check: rollRestCheck(random) };
+    const seconds = explicit ?? (nap ? 3600 : 8 * 3600);
+    const overnight = !nap && (explicit === null || seconds >= 4 * 3600);
+    return {
+      kind: 'sleep', seconds, dayAdvance: overnight ? 1 : 0,
+      label: `${explicit ? `sleep:${seconds}s` : `sleep:inferred:${seconds}s`}${overnight ? ':next-day' : ''}`,
+      check: rollRestCheck(random),
+    };
   }
-  if (explicit) return { kind: 'explicit-duration', seconds: explicit, label: `elapsed:${explicit}s` };
+  if (explicit) return { kind: 'explicit-duration', seconds: explicit, dayAdvance: explicit === 86400 ? 1 : 0, label: `elapsed:${explicit}s` };
   if (/\b(?:wait(?:ed|ing)?|rest(?:ed|ing)?|sat|sit|linger(?:ed|ing)?)\b[^.!?]{0,80}\bfor\s+(?:a|some)\s+while\b/i.test(text)) {
-    return { kind: 'rest', seconds: 15 * 60, label: 'elapsed:inferred-rest:900s' };
+    return { kind: 'rest', seconds: 15 * 60, dayAdvance: 0, label: 'elapsed:inferred-rest:900s' };
   }
 
   // Every committed player turn consumes a little physical time. This is deliberately
   // small and deterministic so dialogue does not freeze the simulation clock while
   // still leaving long actions to explicit/inferred temporal resolution.
-  return { kind: 'turn', seconds: 30, label: 'elapsed:turn:30s' };
+  return { kind: 'turn', seconds: 30, dayAdvance: 0, label: 'elapsed:turn:30s' };
 }
