@@ -1,7 +1,8 @@
 # Speculus V2 foundation
 
-Status: experimental, separate from the stable V1 application. This is the first
-implementation slice, not a completed V2 simulation brain.
+Status: experimental, separate from the stable V1 application. The foundation now
+includes the first Phase-2 simulation pipeline boundary, but it is not a completed
+V2 simulation brain.
 
 ## Isolation contract
 
@@ -45,13 +46,24 @@ Claims and generation responses are not cacheable. Production cookies are Secure
 - Operator controls assert a scene/observation or advance time and record a world
   snapshot in the event ledger. They are explicit setup operations, not inferred
   gameplay movement. Unknown location/presence stays unknown.
+- Phase-2 turn boundary: normal generation now passes through
+  `resolve -> state -> player perception -> context -> generate -> validate -> commit`.
+  The renderer is explicitly downstream from state authority.
+- Player-perspective prose rendering: the player persona owns the output viewpoint
+  even when a loaded character is the authorized behavior subject. Character-local
+  context may guide behavior, but the rendering contract forbids presenting NPC
+  private thoughts, hidden motives or offscreen facts as player-visible truth.
+- Conservative resolution packet: unsupported freeform physical claims are marked
+  deferred instead of being guessed into location, elapsed time, presence or canon.
+  Resolution diagnostics record player/subject actor IDs and the deferred claims.
 - Separate bounded context compiler: source, subject, persona, scene, read-only
-  engine state, actor-local knowledge, relevant available records, influences and
-  up to four recent complete exchanges. Exact included/omitted lists are visible.
-- Transactional generation: compile, generate, structural validation, commit.
-  Provider adapters receive a prompt and settings, not mutable session state.
-  Replies cannot write physical state. Failures/rejections/cancellation do not
-  commit a reply or remove the draft.
+  engine state, distinct player/subject perception, relevant available records,
+  influences and up to four recent complete exchanges. Exact included/omitted
+  lists are visible.
+- Transactional generation: resolve, compile, generate, structural validation,
+  commit. Provider adapters receive a prompt and settings, not mutable session
+  state. Replies cannot write physical state. Failures/rejections/cancellation do
+  not commit a reply or remove the draft.
 - Latest-turn reroll keeps its stable ID and replaces its event. It is unavailable
   after an intervening world edit. Latest-turn deletion removes the pair/event.
 - Raw export/import preserves settings, unsent draft, transcript, diagnostics,
@@ -62,13 +74,16 @@ Claims and generation responses are not cacheable. Production cookies are Secure
 
 ## Explicit limitations / next phases
 
-1. **Semantic claims and action resolution:** current draft validation checks
-   structure/control-token leakage, not every narrative assertion. Prose may still
-   contradict canon; it cannot commit that contradiction to physical state. Add
-   structured action proposals, trusted resolution and claim-level validation.
+1. **Semantic claims and trusted action resolution:** the resolution boundary now
+   exists, but normal freeform player prose is deliberately deferred rather than
+   converted into physical mutations. Current draft validation still checks mainly
+   structure/control-token leakage, not every narrative assertion. Add structured
+   action proposals, deterministic/trusted rule resolution and claim-level
+   validation before generated prose can describe committed physical consequences.
 2. **Spacetime:** no movement graph, distances, line of sight, travel costs,
    body geometry or automatic turn duration yet. Do not label the operator controls
-   as a finished physics engine.
+   as a finished physics engine. These rules are required before the resolver may
+   authoritatively move actors or advance time from natural-language actions.
 3. **Cognition:** initial actor slots are the player and optional primary character.
    Related characters are not automatically present or autonomous. Goals,
    motivations and richer actor-local perception remain next-phase work.
@@ -86,9 +101,9 @@ Claims and generation responses are not cacheable. Production cookies are Secure
    memory compaction remain future work.
 7. **Cancellation:** cancels the browser request and prevents a client commit; the
    already-started shared upstream call may finish and incur provider usage.
-8. **Verification:** deterministic tests and production builds are required.
-   This change has not been tested against a live user NovelAI account. The cloud
-   preview browser blocked localhost, so real-browser visual QA remains pending.
+8. **Verification:** main CI runs the deterministic tests, lint and production
+   build. Live user NovelAI verification and real-browser visual QA are still
+   required before calling the Phase-2 brain production-ready.
 
 No Fabula inventory, economy, dice, world population or autonomous game systems
 are introduced by this slice.
