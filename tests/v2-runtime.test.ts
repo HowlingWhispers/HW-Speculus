@@ -94,11 +94,11 @@ describe('V2 generation transaction', () => {
     const expired = { ...value, launch: { ...value.launch, expiresAt: 1 } };
     await expect(generateV2Turn(expired, adapter())).rejects.toThrow('expired');
   });
-  it('preserves provider-limited text and reports the limit, never hard-cuts it locally', async () => {
+  it('discards provider-limited text instead of committing a cut-off ending', async () => {
+    const value = session(); const copy = structuredClone(value);
     const reply = '*She pauses, considering the';
-    const next = await generateV2Turn(session(), adapter(reply, 'max_tokens'));
-    expect(next.turns[0].reply).toBe(reply);
-    expect(next.turns[0].diagnostics.warnings.join(' ')).toContain('output limit');
+    await expect(generateV2Turn(value, adapter(reply, 'max_tokens'))).rejects.toBeInstanceOf(V2DraftRejected);
+    expect(value).toEqual(copy);
     expect(validateV2Reply('<state_patch>{}</state_patch>')).toHaveLength(1);
   });
 });
