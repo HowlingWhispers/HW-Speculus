@@ -38,6 +38,7 @@ export const orbisLaunchPackageSchema = z.object({
   launchId: z.string().trim().min(8).max(200),
   issuedAt: z.number().int().positive(),
   expiresAt: z.number().int().positive(),
+  initialLocationId: z.string().trim().min(1).max(200).optional(),
   catalog: catalogSchema.optional(),
   primaryAsset: assetSchema,
   relatedAssets: z.array(assetSchema).max(200).default([]),
@@ -53,6 +54,12 @@ export const orbisLaunchPackageSchema = z.object({
   else if (value.expiresAt <= value.issuedAt) context.addIssue({ code: 'custom', message: 'Launch package expiry must be later than its issue time.' });
   if (value.character && value.primaryAsset.type === 'character' && value.character.id !== value.primaryAsset.id) {
     context.addIssue({ code: 'custom', message: 'Primary character identity does not match the packaged character.' });
+  }
+  if (value.initialLocationId) {
+    const assets = [value.primaryAsset, ...value.relatedAssets];
+    if (!assets.some((asset) => asset.id === value.initialLocationId && asset.type === 'place')) {
+      context.addIssue({ code: 'custom', message: 'Initial location must reference a packaged place.', path: ['initialLocationId'] });
+    }
   }
   if (value.catalog) {
     const expected = value.catalog.generation === 1
