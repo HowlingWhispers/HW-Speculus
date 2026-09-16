@@ -78,6 +78,7 @@ export type OrbisLaunchPackage = {
   launchId: string;
   issuedAt: number;
   expiresAt: number;
+  initialLocationId?: string;
   catalog?: SpeculusCatalogIdentity;
   primaryAsset: SimulationAsset;
   relatedAssets: SimulationAsset[];
