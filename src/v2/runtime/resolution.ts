@@ -1,9 +1,11 @@
 import type { V2Session } from './session';
 import { resolveTemporalIntent, type NarrativeDiceResult } from './temporal';
+import { resolveTravelIntent, type TravelResult } from './travel';
 import { applyWorldAction, perceptionFor } from './world';
 
-export const V2_RESOLUTION_SCHEMA = 'speculus-v2-turn-resolution/2' as const;
+export const V2_RESOLUTION_SCHEMA = 'speculus-v2-turn-resolution/3' as const;
 export type V2ResolutionStatus = 'authoritative-noop' | 'resolved' | 'deferred';
+export type ResolvedTravel = Extract<TravelResult, { kind: 'resolved' }>;
 
 export type V2TurnResolution = {
   schemaVersion: typeof V2_RESOLUTION_SCHEMA;
@@ -16,6 +18,7 @@ export type V2TurnResolution = {
   appliedActions: string[];
   deferredClaims: string[];
   narrativeCheck?: NarrativeDiceResult;
+  travel?: ResolvedTravel;
   playerPerception: ReturnType<typeof perceptionFor>;
   subjectPerception: ReturnType<typeof perceptionFor> | null;
 };
@@ -23,10 +26,9 @@ export type V2TurnResolution = {
 /**
  * Trusted V2 turn-resolution boundary.
  *
- * Freeform prose is still never allowed to author places, presence or canon. A
- * deliberately narrow temporal interpreter may, however, recognize elapsed-time
- * intent and commit it before prose rendering. Unsupported physical claims remain
- * deferred rather than guessed into authoritative state.
+ * Freeform prose can propose an action but cannot directly author world state. A
+ * narrow temporal interpreter and canonical travel resolver may commit trusted
+ * effects before prose rendering. Unsupported physical claims remain deferred.
  */
 export function resolveV2PlayerTurn(
   session: V2Session,
@@ -42,19 +44,31 @@ export function resolveV2PlayerTurn(
   let resolvedSession = session;
   let appliedActions: string[] = [];
   let narrativeCheck: NarrativeDiceResult | undefined;
+  let travelResolution: ResolvedTravel | undefined;
   let elapsedSeconds = 0;
   const deferredClaims: string[] = [];
 
   if (!skipped && !reroll) {
-    const temporal = resolveTemporalIntent(player, options.random);
-    elapsedSeconds = temporal.seconds;
-    narrativeCheck = temporal.check;
-    const world = applyWorldAction(session.world, {
-      type: 'advance-clock', seconds: temporal.seconds, days: temporal.dayAdvance,
-    }, session.launch);
-    resolvedSession = { ...session, world };
-    appliedActions = [temporal.label];
-    deferredClaims.push('Movement, presence changes, resource use and other unsupported physical claims remain deferred unless an authoritative resolver handles them.');
+    const travel = resolveTravelIntent(session.launch, session.world, player);
+    if (travel.kind === 'resolved') {
+      const world = applyWorldAction(session.world, {
+        type: 'travel', actorId: playerActorId, locationId: travel.destinationId, seconds: travel.seconds,
+      }, session.launch);
+      resolvedSession = { ...session, world };
+      elapsedSeconds = travel.seconds;
+      travelResolution = travel;
+      appliedActions = [`travel:${travel.originName}->${travel.destinationName}:${travel.distanceKm}km:${travel.mode}:${travel.seconds}s`];
+      deferredClaims.push('Companion movement, supplies, fatigue, encounters and other travel side effects are not yet resolved automatically.');
+    } else {
+      const temporal = resolveTemporalIntent(player, options.random, session.world.timeOfDaySeconds);
+      elapsedSeconds = temporal.seconds;
+      narrativeCheck = temporal.check;
+      const world = applyWorldAction(session.world, { type: 'advance-clock', seconds: temporal.seconds }, session.launch);
+      resolvedSession = { ...session, world };
+      appliedActions = [temporal.label];
+      if (travel.kind === 'deferred') deferredClaims.push(travel.reason);
+      deferredClaims.push('Presence changes, resource use and other unsupported physical claims remain deferred unless an authoritative resolver handles them.');
+    }
   }
 
   const after = resolvedSession.world.revision;
@@ -72,6 +86,7 @@ export function resolveV2PlayerTurn(
       appliedActions,
       deferredClaims,
       narrativeCheck,
+      travel: travelResolution,
       playerPerception: perceptionFor(resolvedSession.world, playerActorId),
       subjectPerception: subjectActorId ? perceptionFor(resolvedSession.world, subjectActorId) : null,
     },
