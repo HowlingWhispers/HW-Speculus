@@ -37,7 +37,10 @@ export function decodeV2SerializedRoleplayArtifacts(text: string) {
 }
 
 export function normalizeV2RoleplayFormat(text: string) {
-  const cleaned = text.trim().replace(/\*("[^"\n]*"|“[^”\n]*”)\*/g, '$1');
+  const dialogueUnwrapped = text.trim()
+    .replace(/(^|\s)\*+(?=["“])/g, '$1')
+    .replace(/(["”])\*+(?=$|\s)/g, '$1');
+  const cleaned = dialogueUnwrapped.replace(/\*("[^"\n]*"|“[^”\n]*”)\*/g, '$1');
   return cleaned.split(/(\[[^\]\n]+\]|"[^"\n]*"|“[^”\n]*”)/g).map((part) => {
     if (!part) return '';
     if ((part.startsWith('[') && part.endsWith(']'))
