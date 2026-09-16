@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { V2Diagnostics, V2Session } from '../runtime/session';
-import { assetsFor, perceptionFor } from '../runtime/world';
+import { assetsFor, perceptionFor, worldClock } from '../runtime/world';
 
 const tabs = ['state', 'context', 'knowledge', 'perception', 'cast', 'provider', 'turns', 'events', 'raw'] as const;
 type Tab = (typeof tabs)[number];
@@ -46,6 +46,7 @@ export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; 
   const selectedTurn = selectedTurnId ? session.turns.find((turn) => turn.id === selectedTurnId) : session.turns.at(-1);
   const diagnostic = selectedTurnId ? selectedTurn?.diagnostics : rejected ?? selectedTurn?.diagnostics;
   const view = perceptionFor(session.world, session.launch.character?.id ?? session.launch.persona.id);
+  const clock = worldClock(session.world);
   const location = assetsFor(session.launch).find((asset) => asset.id === session.world.locationId)?.name;
   const presentIds = new Set(view.presentActors.map((actor) => actor.id));
   const cast = session.world.actors.map((actor) => ({
@@ -68,7 +69,7 @@ export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; 
   const knowledgeView = { actor: session.launch.character?.name ?? session.launch.persona.name, knownFacts: view.knownFacts, limitations: view.limitations };
   const perceptionView = { locationId: view.locationId, location, presentActors: view.presentActors, knownFacts: view.knownFacts, limitations: view.limitations };
   const provider = providerView(session, diagnostic);
-  const content = tab === 'state' ? { world: session.world, location }
+  const content = tab === 'state' ? { world: session.world, clock, location }
     : tab === 'context' ? contextView
       : tab === 'knowledge' ? knowledgeView
         : tab === 'perception' ? perceptionView
@@ -88,7 +89,7 @@ export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; 
     <div className="v2-tabs" role="tablist" aria-label="Diagnostics view">{tabs.map((name) => <button type="button" role="tab" id={`v2-tab-${name}`} aria-controls="v2-diagnostic-content" aria-selected={tab === name} key={name} onClick={() => setTab(name)}>{name}</button>)}</div>
     <div role="tabpanel" id="v2-diagnostic-content" aria-labelledby={`v2-tab-${tab}`}>
       {tab === 'state' && <>
-        <section className="v2-instrument"><h3>World state</h3><dl><dt>Location</dt><dd>{location ?? 'Not anchored'}</dd><dt>Elapsed world time</dt><dd>{session.world.elapsedSeconds} seconds</dd><dt>State revision</dt><dd>{session.world.revision}</dd><dt>Scene presence</dt><dd>{session.world.locationId ? session.world.actors.filter((actor) => actor.locationId === session.world.locationId).map((actor) => actor.name).join(', ') || 'None' : 'Unknown'}</dd></dl></section>
+        <section className="v2-instrument"><h3>World state</h3><dl><dt>Location</dt><dd>{location ?? 'Not anchored'}</dd><dt>World day</dt><dd>Day {clock.simulationDay}</dd><dt>World time</dt><dd>{clock.time}</dd><dt>Day phase</dt><dd>{clock.phase.replaceAll('_', ' ')}</dd><dt>Elapsed world time</dt><dd>{session.world.elapsedSeconds} seconds</dd><dt>State revision</dt><dd>{session.world.revision}</dd><dt>Scene presence</dt><dd>{session.world.locationId ? session.world.actors.filter((actor) => actor.locationId === session.world.locationId).map((actor) => actor.name).join(', ') || 'None' : 'Unknown'}</dd></dl></section>
         <section className="v2-instrument"><h3>Validation</h3><p className={rejected && !selectedTurnId ? 'v2-error-text' : ''}>{rejected && !selectedTurnId ? 'Draft rejected / no commit' : diagnostic ? 'Structural checks passed' : 'Awaiting generation'}</p>{diagnostic?.issues.map((issue) => <p key={issue}>{issue}</p>)}<small>Physical state is protected from prose writes. This is not full semantic canon validation.</small></section>
       </>}
       {tab === 'context' && <>
