@@ -222,6 +222,22 @@ export function V2App() {
     }
   };
 
+  const startNewSimulation = () => {
+    if (!session || busy) return;
+    if (!window.confirm('Start a new simulation with this Orbis package? The current working session will be replaced by the new autosave. Export it first if you want to keep it.')) return;
+    controller.current?.abort();
+    detachedWindow.current?.close();
+    detachedWindow.current = null;
+    sessionStorage.removeItem(PENDING_IMPORT_KEY);
+    setTranscriptDetached(false);
+    setRejected(null);
+    setError('');
+    setStorageError('');
+    setPhaseSeen([]);
+    setImportRevision((value) => value + 1);
+    setSession(createV2Session(session.launch));
+  };
+
   const download = () => {
     if (!session) return;
     try {
@@ -281,6 +297,7 @@ export function V2App() {
           <button disabled={busy || expired} onClick={() => void generate(false, true)}>Skip persona turn</button>
           <button disabled={busy || expired} onClick={() => void impersonate()}>Impersonate</button>
           <button type="button" onClick={openDetachedTranscript}>{transcriptDetached ? 'Focus reader' : 'Detach reader'}</button>
+          <button disabled={busy || expired} onClick={startNewSimulation}>New simulation</button>
           <button disabled={busy} onClick={saveNow}>Save now</button>
           <button disabled={busy} onClick={download}>Export raw</button><button disabled={busy} onClick={() => fileInput.current?.click()}>Import raw</button>
           <button className="v2-delete" disabled={busy || !session.turns.length || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => {
