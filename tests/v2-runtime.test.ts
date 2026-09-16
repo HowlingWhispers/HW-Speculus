@@ -6,17 +6,33 @@ import { compileV2Context, CONTEXT_CHARACTER_BUDGET } from '../src/v2/runtime/co
 import { generateV2Turn, V2DraftRejected, validateV2Reply } from '../src/v2/runtime/engine';
 import { resolveV2PlayerTurn } from '../src/v2/runtime/resolution';
 import { resolveTemporalIntent } from '../src/v2/runtime/temporal';
-import { perceptionFor } from '../src/v2/runtime/world';
+import { perceptionFor, worldClock } from '../src/v2/runtime/world';
 import { exportV2Session, importV2Session } from '../src/v2/storage/session';
 import { v2Package } from './v2-fixtures';
 
 const session = () => ({ ...createV2Session(publicV2Package(v2Package())), draft: '*I look around.*' });
 const adapter = (text = '*Peony looks up.* "Hello."', status: 'completed' | 'max_tokens' = 'completed') => ({ kind: 'mock', generate: vi.fn(async () => ({ text, metadata: { provider: 'mock' as const, model: 'xialong-v1', endpoint: 'mock', durationMs: 1, completionStatus: status } })) }) satisfies ProviderAdapter;
 
+const travelSession = () => {
+  const pack = v2Package({
+    primaryAsset: {
+      id: 'place:hollowmere', type: 'place', revision: 'rev-1', name: 'Hollowmere', summary: 'Regional capital.',
+      data: { sourceId: 'hollowmere', travelFromHollowmere: { distanceFromHollowmereKm: 0 } },
+    },
+    relatedAssets: [{
+      id: 'place:brackenjaw', type: 'place', revision: 'rev-1', name: 'Brackenjaw Enclave', summary: 'An upland settlement.',
+      data: { sourceId: 'brackenjaw-enclave', parentLocationId: 'splitpine-reach', travelFromHollowmere: { distanceFromHollowmereKm: 82 } },
+    }],
+    contextBlocks: [],
+  });
+  return { ...createV2Session(publicV2Package(pack)), draft: '*I ride to Brackenjaw Enclave.*' };
+};
+
 describe('isolated V2 world and cognition', () => {
-  it('does not invent a place, initial time of day or character presence', () => {
+  it('starts with a deterministic engine clock without inventing place or character presence', () => {
     const value = session();
     expect(value.world.locationId).toBeNull(); expect(value.world.elapsedSeconds).toBe(0); expect(value.world.simulationDay).toBe(1);
+    expect(worldClock(value.world)).toMatchObject({ time: '08:00', phase: 'morning', isNight: false });
     expect(perceptionFor(value.world, value.launch.character!.id).presentActors).toEqual([]);
   });
   it('accepts only canonical scene anchors and existing actors, without mutating its input', () => {
@@ -27,16 +43,17 @@ describe('isolated V2 world and cognition', () => {
     expect(value.world.revision).toBe(0); expect(anchored.world.revision).toBe(1);
     expect(perceptionFor(anchored.world, value.launch.character!.id).presentActors).toHaveLength(2);
   });
-  it('keeps knowledge actor-local and records deterministic clock changes', () => {
+  it('keeps knowledge actor-local and derives day rollover from the clock itself', () => {
     const value = session();
     const learned = operateWorld(value, { type: 'record-knowledge', actorId: value.launch.character!.id, fact: 'The lamp is broken.' });
     expect(perceptionFor(learned.world, value.launch.persona.id).knownFacts).toEqual([]);
     expect(perceptionFor(learned.world, value.launch.character!.id).knownFacts).toEqual(['The lamp is broken.']);
     expect(operateWorld(learned, { type: 'advance-clock', seconds: 60 }).world.elapsedSeconds).toBe(60);
-    expect(operateWorld(learned, { type: 'advance-clock', seconds: 86400 }).world.simulationDay).toBe(2);
+    const nextDay = operateWorld(learned, { type: 'advance-clock', seconds: 86400 }).world;
+    expect(nextDay.simulationDay).toBe(2); expect(worldClock(nextDay).time).toBe('08:00');
     for (const seconds of [-1, 0, 0.5, Infinity, 86401]) expect(() => operateWorld(learned, { type: 'advance-clock', seconds })).toThrow();
   });
-  it('resolves elapsed time before rendering without trusting prose as movement or canon', () => {
+  it('resolves ordinary elapsed time before rendering without trusting unsupported physical claims', () => {
     const value = session();
     const before = structuredClone(value.world);
     const resolved = resolveV2PlayerTurn(value, value.draft);
@@ -49,25 +66,42 @@ describe('isolated V2 world and cognition', () => {
     expect(resolved.resolution.worldRevisionBefore).toBe(value.world.revision);
     expect(resolved.resolution.worldRevisionAfter).toBe(value.world.revision + 1);
     expect(resolved.resolution.appliedActions).toEqual(['elapsed:turn:30s']);
-    expect(resolved.resolution.deferredClaims.join(' ')).toContain('Movement');
+    expect(resolved.resolution.deferredClaims.join(' ')).toContain('Presence changes');
   });
-  it('recognizes natural sleep prose, advances to the next simulation day and creates a narrative-dice result', () => {
-    const intent = resolveTemporalIntent('*I closed my eyes and drifted off to sleep.*', () => 0.5);
-    expect(intent.kind).toBe('sleep');
-    expect(intent.seconds).toBe(8 * 3600);
-    expect(intent.dayAdvance).toBe(1);
-    expect(intent.check?.kind).toBe('genesys-style');
-    const value = { ...session(), draft: '*I closed my eyes and drifted off to sleep.*' };
+  it('moves only to a canonical packaged place and lets travel determine arrival time', () => {
+    const value = travelSession();
+    const resolved = resolveV2PlayerTurn(value, value.draft);
+    expect(resolved.session.world.locationId).toBe('place:brackenjaw');
+    expect(resolved.resolution.travel).toMatchObject({
+      originName: 'Hollowmere', destinationName: 'Brackenjaw Enclave', distanceKm: 82, mode: 'mounted', routeBasis: 'direct-reference',
+    });
+    expect(resolved.session.world.elapsedSeconds).toBe(49_200);
+    expect(worldClock(resolved.session.world)).toMatchObject({ simulationDay: 1, time: '21:40', phase: 'night', isNight: true });
+    expect(resolved.resolution.appliedActions[0]).toContain('travel:Hollowmere->Brackenjaw Enclave');
+  });
+  it('does not let observation or teleport prose silently rewrite location', () => {
+    const value = travelSession();
+    const seen = resolveV2PlayerTurn(value, '*I think I see Brackenjaw Enclave in the distance.*');
+    expect(seen.session.world.locationId).toBe('place:hollowmere');
+    const teleported = resolveV2PlayerTurn(value, '*I teleport to Brackenjaw Enclave.*');
+    expect(teleported.session.world.locationId).toBe('place:hollowmere');
+    expect(teleported.resolution.deferredClaims.join(' ')).toContain('Teleportation is not authorized');
+  });
+  it('recognizes natural sleep prose and crosses midnight only when the real clock does', () => {
+    const late = operateWorld(session(), { type: 'advance-clock', seconds: 15 * 3600 });
+    expect(worldClock(late.world).time).toBe('23:00');
+    const value = { ...late, draft: '*I closed my eyes and drifted off to sleep.*' };
     const resolved = resolveV2PlayerTurn(value, value.draft, { random: () => 0.5 });
-    expect(resolved.session.world.elapsedSeconds).toBe(8 * 3600);
+    expect(resolved.session.world.elapsedSeconds).toBe(23 * 3600);
     expect(resolved.session.world.simulationDay).toBe(2);
+    expect(worldClock(resolved.session.world).time).toBe('07:00');
     expect(resolved.resolution.narrativeCheck).toBeTruthy();
   });
-  it('honors explicit durations and keeps naps on the same simulation day', () => {
+  it('honors explicit durations, naps and sleep-until-morning phrasing', () => {
     expect(resolveTemporalIntent('*I wait for two hours.*').seconds).toBe(7200);
     expect(resolveTemporalIntent('*I sat by the fire for a while.*').seconds).toBe(900);
-    const nap = resolveTemporalIntent('*I take a nap for 30 minutes.*', () => 0.5);
-    expect(nap.seconds).toBe(1800); expect(nap.dayAdvance).toBe(0);
+    expect(resolveTemporalIntent('*I take a nap for 30 minutes.*', () => 0.5).seconds).toBe(1800);
+    expect(resolveTemporalIntent('*I sleep until morning.*', () => 0.5, 23 * 3600).seconds).toBe(8 * 3600);
   });
 });
 
@@ -88,6 +122,8 @@ describe('V2 generation transaction', () => {
     expect(request[0].prompt).toContain('TURN RESOLUTION / ENGINE AUTHORITY');
     expect(request[0].prompt).toContain('"elapsedSeconds":30');
     expect(request[0].prompt).toContain('"simulationDay":1');
+    expect(request[0].prompt).toContain('"time":"08:00"');
+    expect(request[0].prompt).toContain('"phase":"morning"');
     expect(request[0].prompt).toContain('Do not prefix it with a speaker name');
     expect(request[0]).not.toHaveProperty('world'); expect(request[0]).not.toHaveProperty('generationGrant');
     expect(next.turns[0].diagnostics.viewpointActorId).toBe(value.launch.persona.id);
@@ -104,6 +140,7 @@ describe('V2 generation transaction', () => {
     expect(second.world.elapsedSeconds).toBe(elapsed);
     const removed = deleteLastTurn(second);
     expect(removed.turns).toEqual([]); expect(removed.events).toEqual([]); expect(removed.world.elapsedSeconds).toBe(0); expect(removed.world.simulationDay).toBe(1);
+    expect(worldClock(removed.world).time).toBe('08:00');
   });
   it('rejects reroll and deletion across a later state change instead of rewriting history', async () => {
     const first = await generateV2Turn(session(), adapter());
@@ -139,6 +176,7 @@ describe('V2 bounded context', () => {
     for (let i = 0; i < 200; i += 1) value = await generateV2Turn({ ...value, draft: `"Test turn ${i + 1}."` }, provider);
     expect(value.turns).toHaveLength(200); expect(value.events).toHaveLength(400);
     expect(value.world.elapsedSeconds).toBe(200 * 30); expect(value.world.simulationDay).toBe(1);
+    expect(worldClock(value.world).time).toBe('09:40');
     expect(value.turns.at(-1)!.diagnostics.prompt.length).toBeLessThanOrEqual(CONTEXT_CHARACTER_BUDGET);
     expect(value.turns.at(-1)!.diagnostics.omitted.join(' ')).toContain('older exchange(s)');
     const raw = exportV2Session(value); expect(raw).not.toContain(value.launch.launchId); expect(raw).not.toContain('generationGrant');
