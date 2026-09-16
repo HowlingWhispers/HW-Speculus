@@ -7,7 +7,7 @@ import { createV2Session } from '../src/v2/runtime/session';
 import { exportV2Session, saveV2Session } from '../src/v2/storage/session';
 import { v2Package } from './v2-fixtures';
 
-beforeEach(() => { sessionStorage.clear(); history.replaceState({}, '', '/v2'); });
+beforeEach(() => { sessionStorage.clear(); localStorage.clear(); history.replaceState({}, '', '/v2'); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 describe('V2 terminal interaction', () => {
   it('does not load a V1 session during a direct V2 visit and offers raw-save recovery', async () => {
@@ -48,5 +48,25 @@ describe('V2 terminal interaction', () => {
     await waitFor(() => expect(JSON.parse(sessionStorage.getItem('speculus.session.v2')!).draft).toBe('An unsent draft.'));
     expect(sessionStorage.getItem('speculus.session.v1')).toBe('unchanged');
     expect(screen.queryByLabelText('Provider')).not.toBeInTheDocument();
+  });
+  it('starts a fresh session only when New simulation is explicitly chosen', async () => {
+    const launch = publicV2Package(v2Package({ initialLocationId: 'place:workshop' }));
+    const original = { ...createV2Session(launch), draft: 'Old working draft.' };
+    saveV2Session(original);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(<V2App />);
+    expect(await screen.findByDisplayValue('Old working draft.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'New simulation' }));
+
+    await waitFor(() => {
+      const saved = JSON.parse(sessionStorage.getItem('speculus.session.v2')!);
+      expect(saved.id).not.toBe(original.id);
+      expect(saved.draft).toBe('');
+      expect(saved.turns).toEqual([]);
+      expect(saved.nextTurn).toBe(1);
+      expect(saved.world.locationId).toBe('place:workshop');
+    });
+    expect(screen.getByLabelText('Your next turn')).toHaveValue('');
   });
 });
