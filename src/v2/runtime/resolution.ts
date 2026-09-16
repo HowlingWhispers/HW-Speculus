@@ -59,6 +59,11 @@ export function resolveV2PlayerTurn(
       travelResolution = travel;
       appliedActions = [`travel:${travel.originName}->${travel.destinationName}:${travel.distanceKm}km:${travel.mode}:${travel.seconds}s`];
       deferredClaims.push('Companion movement, supplies, fatigue, encounters and other travel side effects are not yet resolved automatically.');
+    } else if (travel.kind === 'deferred') {
+      // A failed explicit travel request must not silently degrade into a generic
+      // 30-second action. Keep authoritative state unchanged and tell the
+      // renderer exactly why movement was refused.
+      deferredClaims.push(travel.reason);
     } else {
       const temporal = resolveTemporalIntent(player, options.random, session.world.timeOfDaySeconds);
       elapsedSeconds = temporal.seconds;
@@ -66,7 +71,6 @@ export function resolveV2PlayerTurn(
       const world = applyWorldAction(session.world, { type: 'advance-clock', seconds: temporal.seconds }, session.launch);
       resolvedSession = { ...session, world };
       appliedActions = [temporal.label];
-      if (travel.kind === 'deferred') deferredClaims.push(travel.reason);
       deferredClaims.push('Presence changes, resource use and other unsupported physical claims remain deferred unless an authoritative resolver handles them.');
     }
   }
