@@ -21,7 +21,11 @@ export type TravelResult =
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const MOTION = /\b(?:go|going|went|walk|walking|walked|head|heading|headed|travel|travelling|traveling|travelled|traveled|ride|riding|rode|journey|journeying|return|returning|returned|leave|leaving|left|move|moving|moved|enter|entering|entered|approach|approaching|approached)\b/i;
+const DESTINATION_LINK = /\b(?:to|toward|towards|into|onto|back\s+to)\b/i;
 const TELEPORT = /\b(?:teleport|teleporting|teleported|warp|warping|warped|blink|blinking|blinked)\b/i;
+const STOP_WORDS = new Set(['a', 'an', 'the', 'of', 'in', 'at', 'on', 'to', 'from']);
+
+type PlaceAsset = ReturnType<typeof assetsFor>[number];
 
 function documentFor(launch: V2ClientPackage, assetId: string, data: unknown) {
   const direct = asRecord(data);
@@ -46,6 +50,90 @@ function sourceIdentity(launch: V2ClientPackage, assetId: string, data: unknown)
   };
 }
 
+function normalizeWords(value: string) {
+  return value.toLowerCase().replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function significantWords(value: string) {
+  return normalizeWords(value).split(/\s+/).filter((word) => word && !STOP_WORDS.has(word));
+}
+
+function containsPhrase(text: string, phrase: string) {
+  const normalizedPhrase = normalizeWords(phrase);
+  return Boolean(normalizedPhrase) && ` ${normalizeWords(text)} `.includes(` ${normalizedPhrase} `);
+}
+
+function placeByIdentity(launch: V2ClientPackage, places: PlaceAsset[], identity: string | null) {
+  if (!identity) return undefined;
+  const wanted = identity.trim().toLowerCase();
+  return places.find((place) => place.id.toLowerCase() === wanted
+    || sourceIdentity(launch, place.id, place.data).sourceId.trim().toLowerCase() === wanted);
+}
+
+function inheritedDistanceFromHollowmere(
+  launch: V2ClientPackage,
+  places: PlaceAsset[],
+  place: PlaceAsset,
+  visited = new Set<string>(),
+): number | null {
+  if (visited.has(place.id)) return null;
+  visited.add(place.id);
+  const identity = sourceIdentity(launch, place.id, place.data);
+  if (identity.distanceKm !== null) return identity.distanceKm;
+  const parent = placeByIdentity(launch, places, identity.parentLocationId);
+  return parent ? inheritedDistanceFromHollowmere(launch, places, parent, visited) : null;
+}
+
+function shortPlaceName(launch: V2ClientPackage, places: PlaceAsset[], place: PlaceAsset) {
+  const identity = sourceIdentity(launch, place.id, place.data);
+  const parent = placeByIdentity(launch, places, identity.parentLocationId);
+  if (!parent) return null;
+  const full = normalizeWords(place.name);
+  const parentName = normalizeWords(parent.name);
+  if (full.startsWith(`${parentName} `)) return full.slice(parentName.length + 1).trim() || null;
+  if (full.endsWith(` ${parentName}`)) return full.slice(0, -(parentName.length + 1)).trim() || null;
+  return null;
+}
+
+function destinationFor(launch: V2ClientPackage, places: PlaceAsset[], text: string) {
+  const normalizedText = normalizeWords(text);
+  const shortNames = places.map((place) => shortPlaceName(launch, places, place));
+  const shortNameCounts = new Map<string, number>();
+  for (const name of shortNames) if (name) shortNameCounts.set(name, (shortNameCounts.get(name) ?? 0) + 1);
+
+  const scored = places.map((place, index) => {
+    const identity = sourceIdentity(launch, place.id, place.data);
+    const fullName = normalizeWords(place.name);
+    const sourceName = normalizeWords(identity.sourceId);
+    const parent = placeByIdentity(launch, places, identity.parentLocationId);
+    const parentMentioned = parent ? containsPhrase(normalizedText, parent.name) : false;
+    let score = 0;
+
+    if (containsPhrase(normalizedText, fullName)) score = 1000 + fullName.length;
+    if (sourceName && sourceName !== normalizeWords(place.id) && containsPhrase(normalizedText, sourceName)) {
+      score = Math.max(score, 950 + sourceName.length);
+    }
+
+    const words = significantWords(place.name);
+    if (words.length >= 2 && words.every((word) => normalizedText.split(/\s+/).includes(word))) {
+      score = Math.max(score, 800 + words.length);
+    }
+
+    const shortName = shortNames[index];
+    if (shortName && containsPhrase(normalizedText, shortName)
+      && (parentMentioned || shortNameCounts.get(shortName) === 1)) {
+      score = Math.max(score, (parentMentioned ? 900 : 700) + shortName.length);
+    }
+
+    return { place, score };
+  }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || b.place.name.length - a.place.name.length);
+
+  if (!scored.length) return { place: undefined, ambiguous: false };
+  const top = scored[0];
+  const tied = scored.filter((entry) => entry.score === top.score);
+  return { place: tied.length === 1 ? top.place : undefined, ambiguous: tied.length > 1 };
+}
+
 function modeFrom(text: string): TravelMode {
   if (/\b(?:cart|wagon|carriage)\b/i.test(text)) return 'cart';
   if (/\b(?:ride|riding|rode|horse|mount|mounted|saddle)\b/i.test(text)) return 'mounted';
@@ -63,13 +151,17 @@ export function resolveTravelIntent(launch: V2ClientPackage, world: WorldState, 
   if (!teleporting && !MOTION.test(text)) return { kind: 'none' };
 
   const places = assetsFor(launch).filter((asset) => asset.type === 'place').sort((a, b) => b.name.length - a.name.length);
-  const destination = places.find((asset) => {
-    const match = new RegExp(`\\b${escapeRegExp(asset.name)}\\b`, 'i').exec(text);
-    if (!match) return false;
-    const before = text.slice(Math.max(0, match.index - 120), match.index);
-    return MOTION.test(before) || TELEPORT.test(before);
-  });
-  if (!destination) return { kind: 'none' };
+  const destinationMatch = destinationFor(launch, places, text);
+  const destination = destinationMatch.place;
+  if (!destination) {
+    if (destinationMatch.ambiguous) {
+      return { kind: 'deferred', reason: 'The travel destination is ambiguous among packaged canonical places. Name the settlement, region, or building more specifically.' };
+    }
+    if (DESTINATION_LINK.test(text) || /^\s*\*?\s*(?:travel|journey|return|head|go)\b/i.test(text)) {
+      return { kind: 'deferred', reason: 'The requested travel destination could not be matched to a canonical place packaged by Orbis.' };
+    }
+    return { kind: 'none' };
+  }
   if (teleporting) return { kind: 'deferred', reason: 'Teleportation is not authorized by the packaged world state.', destinationId: destination.id, destinationName: destination.name };
   if (!world.locationId) return { kind: 'deferred', reason: `Travel to ${destination.name} cannot resolve because the player has no confirmed origin location.`, destinationId: destination.id, destinationName: destination.name };
   if (world.locationId === destination.id) return { kind: 'none' };
@@ -83,25 +175,31 @@ export function resolveTravelIntent(launch: V2ClientPackage, world: WorldState, 
   let routeBasis: 'direct-reference' | 'local' | 'via-hollowmere' = 'via-hollowmere';
 
   const relatedLocally = originRef.parentLocationId === destinationRef.sourceId
+    || originRef.parentLocationId === destination.id
     || destinationRef.parentLocationId === originRef.sourceId
+    || destinationRef.parentLocationId === origin.id
     || (originRef.parentLocationId && originRef.parentLocationId === destinationRef.parentLocationId);
   if (relatedLocally) {
     distanceKm = 1;
     routeBasis = 'local';
-  } else if (originRef.distanceKm !== null && destinationRef.distanceKm !== null) {
-    if (originRef.distanceKm === 0 || destinationRef.distanceKm === 0) {
-      distanceKm = Math.max(originRef.distanceKm, destinationRef.distanceKm);
-      routeBasis = 'direct-reference';
-    } else {
-      distanceKm = originRef.distanceKm + destinationRef.distanceKm;
-      routeBasis = 'via-hollowmere';
+  } else {
+    const originDistanceKm = inheritedDistanceFromHollowmere(launch, places, origin);
+    const destinationDistanceKm = inheritedDistanceFromHollowmere(launch, places, destination);
+    if (originDistanceKm !== null && destinationDistanceKm !== null) {
+      if (originDistanceKm === 0 || destinationDistanceKm === 0) {
+        distanceKm = Math.max(originDistanceKm, destinationDistanceKm);
+        routeBasis = 'direct-reference';
+      } else {
+        distanceKm = originDistanceKm + destinationDistanceKm;
+        routeBasis = 'via-hollowmere';
+      }
     }
   }
 
   if (distanceKm === null) {
     return {
       kind: 'deferred',
-      reason: `Travel to ${destination.name} is canonical, but no authoritative route distance is packaged for both endpoints.`,
+      reason: `Travel to ${destination.name} is canonical, but no authoritative route distance is packaged for the destination or one of its parent locations.`,
       destinationId: destination.id,
       destinationName: destination.name,
     };
