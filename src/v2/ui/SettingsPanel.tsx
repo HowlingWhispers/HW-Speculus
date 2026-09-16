@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { DEFAULT_TEXT_COLORS, OUTPUT_PRESETS, type V2Session, type V2Settings } from '../runtime/session';
-import { assetsFor, type WorldAction } from '../runtime/world';
+import { assetsFor, worldClock, type WorldAction } from '../runtime/world';
 
 export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
   session: V2Session; disabled: boolean;
@@ -8,6 +8,7 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
 }) {
   const { launch, settings, world } = session;
   const assets = assetsFor(launch);
+  const clock = worldClock(world);
   const [locationId, setLocationId] = useState(world.locationId ?? '');
   const [present, setPresent] = useState<string[]>(world.actors.map((actor) => actor.id));
   const [seconds, setSeconds] = useState(60);
@@ -26,6 +27,9 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
     <section><h2>Session</h2><dl className="v2-fields">
       <dt>World</dt><dd>{assets.find((asset) => asset.type === 'world')?.name ?? 'Not supplied'}</dd>
       <dt>Location</dt><dd>{assets.find((asset) => asset.id === world.locationId)?.name ?? 'Not anchored'}</dd>
+      <dt>World day</dt><dd>Day {clock.simulationDay}</dd>
+      <dt>World time</dt><dd>{clock.time}</dd>
+      <dt>Day phase</dt><dd>{clock.phase.replaceAll('_', ' ')}</dd>
       <dt>Persona</dt><dd>{launch.persona.name}</dd><dt>Subject</dt><dd>{launch.character?.name ?? 'Simulation Narrator'}</dd>
     </dl>{launch.catalog && <small className="v2-catalog">{launch.catalog.code}</small>}</section>
     <section><h2>Generation</h2><dl className="v2-fields"><dt>Connection</dt><dd>NovelAI via Orbis</dd><dt>Model</dt><dd>{launch.model}</dd></dl>
