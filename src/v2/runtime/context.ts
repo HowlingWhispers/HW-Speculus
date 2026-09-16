@@ -1,7 +1,7 @@
 import type { V2Session } from './session';
 import type { V2TurnResolution } from './resolution';
 import { SKIPPED_PERSONA_TURN } from './turn-control';
-import { assetsFor, perceptionFor } from './world';
+import { assetsFor, perceptionFor, worldClock } from './world';
 
 export const CONTEXT_CHARACTER_BUDGET = 28_000;
 export type V2RenderMode = 'normal' | 'skip-persona' | 'impersonate-persona';
@@ -23,6 +23,7 @@ export function compileV2Context(
   resolution?: V2TurnResolution,
 ) {
   const { launch, world, settings } = session;
+  const clock = worldClock(world);
   const outputEnvelope = v2OutputEnvelope(settings.maxTokens);
   const impersonatingPersona = mode === 'impersonate-persona';
   const skippingPersona = mode === 'skip-persona';
@@ -43,7 +44,7 @@ export function compileV2Context(
     'SPECULUS V2 / PLAYER PERSONA IMPERSONATION CONTRACT',
     `Write only the next in-world turn for the player persona ${launch.persona.name}. This is an explicit operator-requested impersonation of the player persona only.`,
     'Do not write, continue, react for, or impersonate the character or simulation narrator. Their next turn belongs to the normal renderer after the player draft is sent.',
-    'The engine owns physical locations, elapsed time, simulation day and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
+    'The engine owns physical locations, elapsed time, simulation day, time of day, day phase and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
     'Do not invent named places, teleport actors, advance the clock, close the scene, or alter engine state.',
     'Use only information available to the player persona from authored persona data, current scene state, current perception and the visible recent exchange.',
     'Write only in-world roleplay: dialogue in double quotes, action/narration in single asterisks, inner voice in square brackets.',
@@ -55,9 +56,10 @@ export function compileV2Context(
     'SPECULUS V2 / PLAYER-PERSPECTIVE WORLD RENDERING CONTRACT',
     'Render the current simulated world through the player persona\'s perceptual viewpoint. The authorized subject may act, but the prose camera belongs to the player.',
     'The renderer is downstream from world resolution. It may describe state and observable consequences, but it is not allowed to make generated prose authoritative state.',
-    'The engine owns physical locations, elapsed time, simulation day and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
+    'The engine owns physical locations, elapsed time, simulation day, time of day, day phase and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
     'Do not invent named places, teleport actors, independently advance the clock or day, close the scene, or write actions, thoughts, dialogue, consent, decisions or movement for the player.',
-    'When TURN RESOLUTION reports elapsed time or a narrative check, render consequences consistent with that engine result without changing the result.',
+    'When TURN RESOLUTION reports elapsed time, travel or a narrative check, render consequences consistent with that engine result without changing the result.',
+    'If resolved travel arrives during dusk, evening, night, dawn or another clock phase, the environment must match that authoritative phase rather than an earlier prose description.',
     'Only explicitly present actors can interact. Related canon is not automatically known, perceived or physically present.',
     'Authorized-subject private context may guide behavior, but must never be exposed as narration unless the player can perceive its outward evidence or already knows it.',
     'Do not narrate NPC private thoughts, hidden motives, offscreen events or unseen facts as player-visible truth.',
@@ -88,7 +90,7 @@ export function compileV2Context(
       ? section('CHARACTER OR NARRATOR / NEVER IMPERSONATE', launch.character ?? { name: 'SIMULATION NARRATOR' })
       : section('PLAYER PERSONA / OUTPUT VIEWPOINT / NEVER IMPERSONATE', launch.persona))
     + section('AUTHORED SCENE', launch.scene)
-    + section('ENGINE STATE / READ ONLY', { revision: world.revision, elapsedSeconds: world.elapsedSeconds, simulationDay: world.simulationDay, locationId: world.locationId, locationLabel: assetsFor(launch).find((asset) => asset.id === world.locationId)?.name ?? null, actors: world.actors.map(({ knowledge: _private, ...actor }) => actor) })
+    + section('ENGINE STATE / READ ONLY', { revision: world.revision, elapsedSeconds: world.elapsedSeconds, simulationDay: world.simulationDay, clock, locationId: world.locationId, locationLabel: assetsFor(launch).find((asset) => asset.id === world.locationId)?.name ?? null, actors: world.actors.map(({ knowledge: _private, ...actor }) => actor) })
     + section('PLAYER PERCEPTION / OUTPUT VIEW', playerPerception);
 
   if (!impersonatingPersona && subjectPerception) {
@@ -103,6 +105,7 @@ export function compileV2Context(
       worldRevisionAfter: resolution.worldRevisionAfter,
       elapsedSeconds: resolution.elapsedSeconds,
       appliedActions: resolution.appliedActions,
+      travel: resolution.travel ?? null,
       narrativeCheck: resolution.narrativeCheck ?? null,
       deferredClaims: resolution.deferredClaims,
     });
