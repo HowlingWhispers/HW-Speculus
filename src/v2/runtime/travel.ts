@@ -19,7 +19,6 @@ export type TravelResult =
   };
 
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const MOTION = /\b(?:go|going|went|walk|walking|walked|head|heading|headed|travel|travelling|traveling|travelled|traveled|ride|riding|rode|journey|journeying|return|returning|returned|leave|leaving|left|move|moving|moved|enter|entering|entered|approach|approaching|approached)\b/i;
 const DESTINATION_LINK = /\b(?:to|toward|towards|into|onto|back\s+to)\b/i;
 const TELEPORT = /\b(?:teleport|teleporting|teleported|warp|warping|warped|blink|blinking|blinked)\b/i;
@@ -97,6 +96,7 @@ function shortPlaceName(launch: V2ClientPackage, places: PlaceAsset[], place: Pl
 
 function destinationFor(launch: V2ClientPackage, places: PlaceAsset[], text: string) {
   const normalizedText = normalizeWords(text);
+  const normalizedTextWords = normalizedText.split(/\s+/);
   const shortNames = places.map((place) => shortPlaceName(launch, places, place));
   const shortNameCounts = new Map<string, number>();
   for (const name of shortNames) if (name) shortNameCounts.set(name, (shortNameCounts.get(name) ?? 0) + 1);
@@ -115,8 +115,11 @@ function destinationFor(launch: V2ClientPackage, places: PlaceAsset[], text: str
     }
 
     const words = significantWords(place.name);
-    if (words.length >= 2 && words.every((word) => normalizedText.split(/\s+/).includes(word))) {
-      score = Math.max(score, 800 + words.length);
+    if (words.length >= 2 && words.every((word) => normalizedTextWords.includes(word))) {
+      // All meaningful words naming a nested place can appear in natural speech
+      // in a different order, e.g. "Ranger Station in Brackenjaw enclave".
+      // Prefer that complete, more-specific match over the parent settlement.
+      score = Math.max(score, 1200 + words.length * 10 + fullName.length);
     }
 
     const shortName = shortNames[index];
