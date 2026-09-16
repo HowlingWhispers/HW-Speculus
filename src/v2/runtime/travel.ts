@@ -58,17 +58,19 @@ function speedFor(mode: TravelMode) {
 
 export function resolveTravelIntent(launch: V2ClientPackage, world: WorldState, player: string): TravelResult {
   const text = player.trim();
-  if (!text || !MOTION.test(text)) return { kind: 'none' };
+  if (!text) return { kind: 'none' };
+  const teleporting = TELEPORT.test(text);
+  if (!teleporting && !MOTION.test(text)) return { kind: 'none' };
 
   const places = assetsFor(launch).filter((asset) => asset.type === 'place').sort((a, b) => b.name.length - a.name.length);
   const destination = places.find((asset) => {
     const match = new RegExp(`\\b${escapeRegExp(asset.name)}\\b`, 'i').exec(text);
     if (!match) return false;
     const before = text.slice(Math.max(0, match.index - 120), match.index);
-    return MOTION.test(before);
+    return MOTION.test(before) || TELEPORT.test(before);
   });
   if (!destination) return { kind: 'none' };
-  if (TELEPORT.test(text)) return { kind: 'deferred', reason: 'Teleportation is not authorized by the packaged world state.', destinationId: destination.id, destinationName: destination.name };
+  if (teleporting) return { kind: 'deferred', reason: 'Teleportation is not authorized by the packaged world state.', destinationId: destination.id, destinationName: destination.name };
   if (!world.locationId) return { kind: 'deferred', reason: `Travel to ${destination.name} cannot resolve because the player has no confirmed origin location.`, destinationId: destination.id, destinationName: destination.name };
   if (world.locationId === destination.id) return { kind: 'none' };
 
