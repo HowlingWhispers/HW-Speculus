@@ -8,7 +8,17 @@ type SaveState = 'standby' | 'saved' | 'fault';
 
 function signatureOf(session: NonNullable<ReturnType<typeof loadV2Session>>) {
   const last = session.turns.at(-1);
-  return [session.id, session.world.revision, session.turns.length, last?.id ?? '', last?.reply ?? ''].join('|');
+  return JSON.stringify([
+    session.id,
+    session.world.revision,
+    session.turns.length,
+    session.events.length,
+    session.nextTurn,
+    last?.id ?? '',
+    last?.reply ?? '',
+    session.draft,
+    session.settings,
+  ]);
 }
 
 export function V2AutosaveControls() {
@@ -17,6 +27,14 @@ export function V2AutosaveControls() {
   const [hasSession, setHasSession] = useState(false);
   const [recoveryLabel, setRecoveryLabel] = useState('');
   const lastSignature = useRef('');
+
+  const persist = (session: NonNullable<ReturnType<typeof loadV2Session>>) => {
+    const saved = saveV2LocalAutosave(session);
+    lastSignature.current = signatureOf(session);
+    setSavedAt(saved.savedAt);
+    setState('saved');
+    return saved;
+  };
 
   useEffect(() => {
     const check = () => {
@@ -33,13 +51,9 @@ export function V2AutosaveControls() {
           return;
         }
         setRecoveryLabel('');
-        if (session.turns.length === 0) return;
         const signature = signatureOf(session);
         if (signature === lastSignature.current) return;
-        lastSignature.current = signature;
-        const saved = saveV2LocalAutosave(session);
-        setSavedAt(saved.savedAt);
-        setState('saved');
+        persist(session);
       } catch {
         setState('fault');
       }
@@ -49,10 +63,21 @@ export function V2AutosaveControls() {
     return () => window.clearInterval(timer);
   }, []);
 
+  const saveNow = () => {
+    try {
+      const session = loadV2Session();
+      if (!session) return;
+      persist(session);
+    } catch {
+      setState('fault');
+    }
+  };
+
   const snapshot = () => {
     try {
       const session = loadV2Session();
       if (!session) return;
+      persist(session);
       const label = window.prompt('Snapshot name (optional):', '');
       if (label === null) return;
       const raw = exportV2Session(session);
@@ -81,6 +106,7 @@ export function V2AutosaveControls() {
 
   return <aside className={`v2-autosave-dock v2-autosave-dock--${state}`} aria-live="polite">
     <span>{status}</span>
-    <button type="button" onClick={snapshot}>Save snapshot</button>
+    <button type="button" onClick={saveNow}>Save now</button>
+    <button type="button" onClick={snapshot}>Download snapshot</button>
   </aside>;
 }
