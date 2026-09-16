@@ -1,3 +1,5 @@
+import { DEFAULT_START_SECOND_OF_DAY, SECONDS_PER_DAY } from './world';
+
 export type NarrativeDiceResult = {
   kind: 'genesys-style';
   successes: number;
@@ -10,7 +12,6 @@ export type NarrativeDiceResult = {
 export type TemporalIntent = {
   kind: 'turn' | 'explicit-duration' | 'sleep' | 'rest';
   seconds: number;
-  dayAdvance: number;
   label: string;
   check?: NarrativeDiceResult;
 };
@@ -32,8 +33,8 @@ function durationSeconds(text: string): number | null {
   const amount = amountOf(match[1]);
   if (!Number.isFinite(amount) || amount <= 0) return null;
   const unit = match[2].toLowerCase();
-  const multiplier = unit.startsWith('sec') ? 1 : unit.startsWith('min') ? 60 : unit.startsWith('h') ? 3600 : 86400;
-  return Math.max(1, Math.min(86400, Math.round(amount * multiplier)));
+  const multiplier = unit.startsWith('sec') ? 1 : unit.startsWith('min') ? 60 : unit.startsWith('h') ? 3600 : SECONDS_PER_DAY;
+  return Math.max(1, Math.min(SECONDS_PER_DAY, Math.round(amount * multiplier)));
 }
 
 function rollSymbol(random: () => number) {
@@ -72,7 +73,17 @@ export function rollRestCheck(random: () => number = Math.random): NarrativeDice
   };
 }
 
-export function resolveTemporalIntent(player: string, random: () => number = Math.random): TemporalIntent {
+function secondsUntilMorning(currentTimeOfDaySeconds: number) {
+  const morning = 7 * 3600;
+  if (currentTimeOfDaySeconds < morning) return morning - currentTimeOfDaySeconds;
+  return SECONDS_PER_DAY - currentTimeOfDaySeconds + morning;
+}
+
+export function resolveTemporalIntent(
+  player: string,
+  random: () => number = Math.random,
+  currentTimeOfDaySeconds = DEFAULT_START_SECOND_OF_DAY,
+): TemporalIntent {
   const text = player.trim();
   const explicit = durationSeconds(text);
   const nap = /\b(?:nap(?:ped|ping)?|doz(?:e|ed|ing))\b/i.test(text);
@@ -81,21 +92,19 @@ export function resolveTemporalIntent(player: string, random: () => number = Mat
     || /closed\s+(?:my|their|his|her)\s+eyes[^.!?]{0,80}(?:sleep|drift)/i.test(text);
 
   if (sleep) {
-    const seconds = explicit ?? (nap ? 3600 : 8 * 3600);
-    const overnight = !nap && (explicit === null || seconds >= 4 * 3600);
+    const untilMorning = /\b(?:until|till)\s+(?:the\s+)?(?:morning|dawn|sunrise)\b/i.test(text)
+      || /\bsleep\s+through\s+the\s+night\b/i.test(text);
+    const seconds = explicit ?? (untilMorning ? secondsUntilMorning(currentTimeOfDaySeconds) : nap ? 3600 : 8 * 3600);
     return {
-      kind: 'sleep', seconds, dayAdvance: overnight ? 1 : 0,
-      label: `${explicit ? `sleep:${seconds}s` : `sleep:inferred:${seconds}s`}${overnight ? ':next-day' : ''}`,
+      kind: 'sleep', seconds,
+      label: explicit ? `sleep:${seconds}s` : untilMorning ? `sleep:until-morning:${seconds}s` : `sleep:inferred:${seconds}s`,
       check: rollRestCheck(random),
     };
   }
-  if (explicit) return { kind: 'explicit-duration', seconds: explicit, dayAdvance: explicit === 86400 ? 1 : 0, label: `elapsed:${explicit}s` };
+  if (explicit) return { kind: 'explicit-duration', seconds: explicit, label: `elapsed:${explicit}s` };
   if (/\b(?:wait(?:ed|ing)?|rest(?:ed|ing)?|sat|sit|linger(?:ed|ing)?)\b[^.!?]{0,80}\bfor\s+(?:a|some)\s+while\b/i.test(text)) {
-    return { kind: 'rest', seconds: 15 * 60, dayAdvance: 0, label: 'elapsed:inferred-rest:900s' };
+    return { kind: 'rest', seconds: 15 * 60, label: 'elapsed:inferred-rest:900s' };
   }
 
-  // Every committed player turn consumes a little physical time. This is deliberately
-  // small and deterministic so dialogue does not freeze the simulation clock while
-  // still leaving long actions to explicit/inferred temporal resolution.
-  return { kind: 'turn', seconds: 30, dayAdvance: 0, label: 'elapsed:turn:30s' };
+  return { kind: 'turn', seconds: 30, label: 'elapsed:turn:30s' };
 }
