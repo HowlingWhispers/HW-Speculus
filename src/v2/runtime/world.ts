@@ -65,8 +65,22 @@ function assertPlace(locationId: string, launch: V2ClientPackage) {
   }
 }
 
+function sourceIdOf(data: unknown) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const sourceId = (data as Record<string, unknown>).sourceId;
+  return typeof sourceId === 'string' ? sourceId : null;
+}
+
+function initialLocationFor(launch: V2ClientPackage) {
+  if (launch.primaryAsset.type === 'place') return launch.primaryAsset.id;
+  const assets = assetsFor(launch);
+  const isBitterroot = assets.some((asset) => asset.type === 'world' && asset.name.trim().toLowerCase() === 'bitterroot');
+  if (!isBitterroot) return null;
+  return assets.find((asset) => asset.type === 'place' && sourceIdOf(asset.data) === 'hollowmere')?.id ?? null;
+}
+
 export function createWorld(launch: V2ClientPackage): WorldState {
-  const locationId = launch.primaryAsset.type === 'place' ? launch.primaryAsset.id : null;
+  const locationId = initialLocationFor(launch);
   return {
     revision: 0, elapsedSeconds: 0, simulationDay: 1, timeOfDaySeconds: DEFAULT_START_SECOND_OF_DAY, locationId,
     actors: [
