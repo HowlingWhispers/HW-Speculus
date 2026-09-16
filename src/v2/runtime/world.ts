@@ -65,9 +65,25 @@ function assertPlace(locationId: string, launch: V2ClientPackage) {
   }
 }
 
+function sourceIdOf(data: unknown) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const sourceId = (data as Record<string, unknown>).sourceId;
+  return typeof sourceId === 'string' ? sourceId.trim().toLowerCase() : null;
+}
+
 function initialLocationFor(launch: V2ClientPackage) {
   if (launch.primaryAsset.type === 'place') return launch.primaryAsset.id;
-  return launch.initialLocationId ?? null;
+  if (launch.initialLocationId) return launch.initialLocationId;
+
+  // Compatibility fallback for launch packages created before Orbis began
+  // emitting initialLocationId. The fallback can only anchor to a place that
+  // is already packaged, so it never invents or reaches outside launch canon.
+  const assets = assetsFor(launch);
+  const isBitterroot = assets.some((asset) => asset.type === 'world' && asset.name.trim().toLowerCase() === 'bitterroot');
+  if (!isBitterroot) return null;
+  const hollowmere = assets.find((asset) => asset.type === 'place'
+    && (asset.name.trim().toLowerCase() === 'hollowmere' || sourceIdOf(asset.data) === 'hollowmere'));
+  return hollowmere?.id ?? null;
 }
 
 export function createWorld(launch: V2ClientPackage): WorldState {
