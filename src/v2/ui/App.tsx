@@ -4,6 +4,7 @@ import { V2BrowserProvider } from '../providers/browser';
 import { generateV2Turn, V2DraftRejected, type EnginePhase } from '../runtime/engine';
 import { generateV2PersonaDraft } from '../runtime/persona-draft';
 import { createV2Session, deleteLastTurn, operateWorld, type V2Diagnostics, type V2Session } from '../runtime/session';
+import { loadLatestV2LocalAutosave, saveV2LocalAutosave } from '../storage/autosave';
 import { exportV2Session, importV2Session, inspectV2Session, loadV2Session, MAX_V2_FILE_BYTES, saveV2Session, v2ExportFilename } from '../storage/session';
 import { detachedTranscriptChannelName, type DetachedTranscriptMessage } from './detached-channel';
 import { V2DiagnosticsPanel } from './Diagnostics';
@@ -70,7 +71,15 @@ export function V2App() {
       try {
         let next = code ? createV2Session(await claimPackage(code)) : loadV2Session();
         if (code && next) {
-          const pending = sessionStorage.getItem(PENDING_IMPORT_KEY);
+          let pending = sessionStorage.getItem(PENDING_IMPORT_KEY);
+          if (!pending) {
+            const latest = loadLatestV2LocalAutosave();
+            const source = latest?.identity;
+            const primary = next.launch.primaryAsset;
+            if (latest && source?.id === primary.id && source.type === primary.type && source.revision === primary.revision) {
+              pending = latest.raw;
+            }
+          }
           if (pending) {
             try {
               next = importV2Session(pending, next);
@@ -92,8 +101,13 @@ export function V2App() {
 
   useEffect(() => {
     if (!session) return;
-    try { saveV2Session(session); setStorageError(''); }
-    catch { setStorageError('Tab storage is unavailable or full. Export your session now to preserve it.'); }
+    try {
+      saveV2Session(session);
+      saveV2LocalAutosave(session);
+      setStorageError('');
+    } catch {
+      setStorageError('Local save storage is unavailable or full. Export your session now to preserve it.');
+    }
   }, [session]);
 
   useEffect(() => {
@@ -196,6 +210,18 @@ export function V2App() {
     popup.focus();
   };
 
+  const saveNow = () => {
+    if (!session) return;
+    try {
+      saveV2Session(session);
+      saveV2LocalAutosave(session);
+      setStorageError('');
+      setError('');
+    } catch {
+      setStorageError('Local save storage is unavailable or full. Export your session now to preserve it.');
+    }
+  };
+
   const download = () => {
     if (!session) return;
     try {
@@ -255,6 +281,7 @@ export function V2App() {
           <button disabled={busy || expired} onClick={() => void generate(false, true)}>Skip persona turn</button>
           <button disabled={busy || expired} onClick={() => void impersonate()}>Impersonate</button>
           <button type="button" onClick={openDetachedTranscript}>{transcriptDetached ? 'Focus reader' : 'Detach reader'}</button>
+          <button disabled={busy} onClick={saveNow}>Save now</button>
           <button disabled={busy} onClick={download}>Export raw</button><button disabled={busy} onClick={() => fileInput.current?.click()}>Import raw</button>
           <button className="v2-delete" disabled={busy || !session.turns.length || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => {
             if (window.confirm('Remove the latest player/reply pair and its resolved state from this V2 session?')) { setSession(deleteLastTurn(session)); setRejected(null); }
