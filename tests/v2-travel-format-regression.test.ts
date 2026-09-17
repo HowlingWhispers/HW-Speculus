@@ -23,7 +23,7 @@ function bitterrootPackage(initialLocationId?: string) {
         data: { sourceId: 'brackenjaw-enclave', travelFromHollowmere: { distanceFromHollowmereKm: 24 } },
       },
       {
-        id: 'place:brackenjaw-ranger-station', type: 'place', revision: 'rev-1', name: 'Brackenjaw Enclave Ranger Station', summary: 'Ranger station.',
+        id: 'place:brackenjaw-ranger-station', type: 'place', revision: 'rev-1', name: 'Brackenjaw Ranger Station', summary: 'Ranger station.',
         data: { sourceId: 'ranger-station', parentLocationId: 'brackenjaw-enclave' },
       },
     ],
@@ -47,6 +47,17 @@ describe('V2 Bitterroot movement regressions', () => {
     expect(resolved.resolution.travel?.distanceKm).toBe(24);
     expect(resolved.session.world.locationId).toBe('place:brackenjaw-ranger-station');
     expect(resolved.session.world.elapsedSeconds).toBe(21_600);
+  });
+
+  it('commits completed first-person past-tense travel to the canonical destination', () => {
+    const session = createV2Session(publicV2Package(bitterrootPackage('place:hollowmere')));
+    const resolved = resolveV2PlayerTurn(session, '*I traveled to Brackenjaw Ranger Station*');
+
+    expect(resolved.resolution.status).toBe('resolved');
+    expect(resolved.resolution.travel?.destinationId).toBe('place:brackenjaw-ranger-station');
+    expect(resolved.session.world.locationId).toBe('place:brackenjaw-ranger-station');
+    expect(resolved.session.world.elapsedSeconds).toBe(21_600);
+    expect(resolved.resolution.appliedActions[0]).toContain('travel:Hollowmere->Brackenjaw Ranger Station');
   });
 
   it('does not spend generic turn time when an explicit travel destination cannot resolve', () => {
