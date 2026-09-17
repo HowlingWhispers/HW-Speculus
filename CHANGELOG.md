@@ -4,6 +4,8 @@ Speculus uses a human-readable release version plus a 7-character Git build id s
 
 ## Unreleased: isolated V2 foundation
 
+- Harden canonical travel resolution by merging compact place navigation with matching Orbis context data and honoring imported place source IDs.
+- Add a regression for completed first-person travel to Brackenjaw Ranger Station so location and elapsed travel time must commit before rendering.
 - Preserve safe Orbis/NovelAI error categories, provider status, rejected setting
   and request IDs instead of hiding generation failures behind a generic 502.
   Handle unreadable V2 gateway responses without a JSON parsing crash.
