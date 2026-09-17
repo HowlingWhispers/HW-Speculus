@@ -28,17 +28,24 @@ type PlaceAsset = ReturnType<typeof assetsFor>[number];
 
 function documentFor(launch: V2ClientPackage, assetId: string, data: unknown) {
   const direct = asRecord(data);
-  if (Object.keys(direct).length) return direct;
   const block = launch.contextBlocks.find((value) => value.id === assetId);
-  if (!block) return {};
-  try { return asRecord(JSON.parse(block.content)); }
-  catch { return {}; }
+  let contextual: Record<string, unknown> = {};
+  if (block) {
+    try { contextual = asRecord(JSON.parse(block.content)); }
+    catch { contextual = {}; }
+  }
+  return { ...contextual, ...direct };
 }
 
 function sourceIdentity(launch: V2ClientPackage, assetId: string, data: unknown) {
   const document = documentFor(launch, assetId, data);
+  const sourceId = typeof document.sourceId === 'string'
+    ? document.sourceId
+    : typeof document.id === 'string'
+      ? document.id
+      : assetId;
   return {
-    sourceId: typeof document.sourceId === 'string' ? document.sourceId : assetId,
+    sourceId,
     parentLocationId: typeof document.parentLocationId === 'string' ? document.parentLocationId : null,
     distanceKm: (() => {
       const travel = asRecord(document.travelFromHollowmere);
