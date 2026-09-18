@@ -20,11 +20,11 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
     saveV2Session(session);
     window.location.assign('/');
   };
-  const switchToV3 = () => {
+  const switchToV2 = () => {
     saveV2Session(session);
     const raw = sessionStorage.getItem(V2_STORAGE_KEY);
-    if (raw) sessionStorage.setItem('speculus.session.v3.experimental', raw);
-    window.location.assign('/v3');
+    if (raw) sessionStorage.setItem('speculus.session.v2', raw);
+    window.location.assign('/v2');
   };
   const numeric = (label: string, key: keyof Pick<V2Settings, 'maxTokens' | 'temperature' | 'topK' | 'topP' | 'presencePenalty' | 'frequencyPenalty'>, min: number, max: number, step = 1) =>
     <label className="v2-field"><span>{label}</span><input type="number" min={min} max={max} step={step} value={settings[key]} onChange={(event) => {
@@ -36,8 +36,8 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
 
   return <aside className="v2-panel v2-settings" aria-label="Simulation settings"><fieldset disabled={disabled}>
     <section><h2>Engine</h2>
-      <div className="v2-output" role="group" aria-label="Simulation engine"><button type="button" aria-pressed="false" onClick={switchToV1}>V1 Legacy</button><button type="button" aria-pressed="true" disabled>V2 Stable</button><button type="button" aria-pressed="false" onClick={switchToV3}>V3 Experimental</button></div>
-      <small>V3 starts from this V2 session in an isolated experimental store. Switching does not delete the V2 copy.</small>
+      <div className="v2-output" role="group" aria-label="Simulation engine"><button type="button" aria-pressed="false" onClick={switchToV1}>V1 Legacy</button><button type="button" aria-pressed="false" onClick={switchToV2}>V2 Stable</button><button type="button" aria-pressed="true" disabled>V3 Experimental</button></div>
+      <small>V3 is built directly on the V2 baseline. Its session and autosave stores are isolated while the experiment replaces V2 systems incrementally.</small>
     </section>
     <section><h2>Session</h2><dl className="v2-fields">
       <dt>World</dt><dd>{assets.find((asset) => asset.type === 'world')?.name ?? 'Not supplied'}</dd>
