@@ -4,10 +4,6 @@ Speculus uses a human-readable release version plus a 7-character Git build id s
 
 ## Unreleased: isolated V2 foundation
 
-- Begin the V3 experimental runtime as an isolated copy of the working V2 client baseline while V2 remains the stable fallback.
-- Add a dedicated `/v3` entry route. V3 is intentionally built on V2 first, then V2-derived systems can be removed or replaced inside V3 without destabilizing V2.
-- Document V3 protocol isolation as a hard requirement: internal turn-boundary markers must never reach player-visible chat.
-
 - Harden canonical travel resolution by merging compact place navigation with matching Orbis context data and honoring imported place source IDs.
 - Add a regression for completed first-person travel to Brackenjaw Ranger Station so location and elapsed travel time must commit before rendering.
 - Preserve safe Orbis/NovelAI error categories, provider status, rejected setting
