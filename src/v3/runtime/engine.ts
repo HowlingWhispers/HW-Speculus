@@ -9,8 +9,7 @@ export class V2DraftRejected extends Error {
   constructor(message: string, readonly diagnostics: V2Diagnostics) { super(message); }
 }
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-');
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const V3_LEGACY_PROTOCOL_BLOCKS = [
   /\[RECENT EXCHANGE \/ NOT ENGINE AUTHORITY\][\s\S]*?\[END RECENT EXCHANGE\]/gi,
@@ -93,7 +92,7 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
 } = {}): Promise<V2Session> {
   const settings = settingsSchema.parse(session.settings);
   if (options.signal?.aborted) throw new Error('Generation cancelled. No provider call was made.');
-  if (session.launch.expiresAt <= Date.now()) throw new Error('V3 authorization expired. Relaunch from Orbis, then import your V2 export.');
+  if (session.launch.expiresAt <= Date.now()) throw new Error('V3 authorization expired. Relaunch from Orbis, then import your V3/V2-compatible export.');
   const last = session.turns.at(-1);
   if (options.reroll && (!last || last.worldRevision !== session.world.revision)) {
     throw new Error('Reroll requires the latest turn and its unchanged world state.');
@@ -137,7 +136,7 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   if (options.reroll) warnings.push('Reroll reused the already-resolved world state. Elapsed time and narrative dice were not rolled or committed twice.');
   if (decodedReply !== rawReply) warnings.push('Serialized roleplay escape sequences were decoded before commit.');
   if (sanitizedReply !== decodedReply) warnings.push('Legacy Speculus turn/control markers were stripped before commit.');
-  if (canNormalize && normalizedReply !== decodedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
+  if (canNormalize && normalizedReply !== sanitizedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
   if (compiled.omitted.length) warnings.push('Some history/canon was omitted. Inspect the Context tab for the exact list.');
   const diagnostics: V2Diagnostics = {
     prompt: compiled.prompt, included: compiled.included, omitted: compiled.omitted,
