@@ -16,6 +16,10 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
   const [fact, setFact] = useState('');
   const [stopText, setStopText] = useState(settings.stopSequences.join('\n'));
   const actorId = launch.character?.id ?? launch.persona.id;
+  const switchToV1 = () => {
+    saveV2Session(session);
+    window.location.assign('/');
+  };
   const switchToV3 = () => {
     saveV2Session(session);
     const raw = sessionStorage.getItem(V2_STORAGE_KEY);
@@ -32,7 +36,7 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
 
   return <aside className="v2-panel v2-settings" aria-label="Simulation settings"><fieldset disabled={disabled}>
     <section><h2>Engine</h2>
-      <div className="v2-output" role="group" aria-label="Simulation engine"><button type="button" aria-pressed="true" disabled>V2 Stable</button><button type="button" aria-pressed="false" onClick={switchToV3}>V3 Experimental</button></div>
+      <div className="v2-output" role="group" aria-label="Simulation engine"><button type="button" aria-pressed="false" onClick={switchToV1}>V1 Legacy</button><button type="button" aria-pressed="true" disabled>V2 Stable</button><button type="button" aria-pressed="false" onClick={switchToV3}>V3 Experimental</button></div>
       <small>V3 starts from this V2 session in an isolated experimental store. Switching does not delete the V2 copy.</small>
     </section>
     <section><h2>Session</h2><dl className="v2-fields">
