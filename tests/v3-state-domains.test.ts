@@ -36,13 +36,7 @@ describe('V3 runtime state domains', () => {
       equipped: false,
       condition: null,
     };
-    const value = runtimeDomainsSchema.safeParse({ inventory: [
-      { ...item, id: undefined },
-    ] });
-    // inventory instances identify themselves with instanceId; the domain itself
-    // remains parseable here because duplicate checks are exercised on domains
-    // that use a common id field below.
-    expect(value.success).toBe(true);
+    expect(runtimeDomainsSchema.safeParse({ inventory: [item, item] }).success).toBe(false);
 
     const relationship = {
       id: 'relationship-1',
