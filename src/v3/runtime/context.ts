@@ -5,7 +5,7 @@ import { assetsFor, perceptionFor, worldClock } from './world';
 
 export const CONTEXT_CHARACTER_BUDGET = 28_000;
 export type V2RenderMode = 'normal' | 'skip-persona' | 'impersonate-persona';
-const section = (title: string, value: unknown) => `\n[${title}]\n${typeof value === 'string' ? value : JSON.stringify(value)}\n`;
+const section = (title: string, value: unknown) => `\n${title}\n${typeof value === 'string' ? value : JSON.stringify(value)}\n`;
 
 export function v2OutputEnvelope(maxTokens: number) {
   const completionReserveTokens = Math.min(512, Math.max(8, Math.floor(maxTokens * 0.25)));
@@ -41,7 +41,7 @@ export function compileV2Context(
     'Ending naturally well below the hard ceiling is correct. Do not pad the response to consume the allowance.',
   ];
   const instructions = impersonatingPersona ? [
-    'SPECULUS V2 / PLAYER PERSONA IMPERSONATION CONTRACT',
+    'SPECULUS V3 EXPERIMENTAL / PLAYER PERSONA IMPERSONATION CONTRACT',
     `Write only the next in-world turn for the player persona ${launch.persona.name}. This is an explicit operator-requested impersonation of the player persona only.`,
     'Do not write, continue, react for, or impersonate the character or simulation narrator. Their next turn belongs to the normal renderer after the player draft is sent.',
     'The engine owns physical locations, elapsed time, simulation day, time of day, day phase and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
@@ -53,7 +53,7 @@ export function compileV2Context(
     'Stop when the player persona turn is complete. Do not generate the other side of the exchange.',
     ...outputRules,
   ].join('\n') : [
-    'SPECULUS V2 / PLAYER-PERSPECTIVE WORLD RENDERING CONTRACT',
+    'SPECULUS V3 EXPERIMENTAL / PLAYER-PERSPECTIVE WORLD RENDERING CONTRACT',
     'Render the current simulated world through the player persona\'s perceptual viewpoint. The authorized subject may act, but the prose camera belongs to the player.',
     'The renderer is downstream from world resolution. It may describe state and observable consequences, but it is not allowed to make generated prose authoritative state.',
     'The engine owns physical locations, elapsed time, simulation day, time of day, day phase and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
@@ -114,20 +114,19 @@ export function compileV2Context(
 
   const influence = section('STYLE INFLUENCE / NOT STATE AUTHORITY', { tags: settings.tags, freeform: settings.freeform });
   const input = impersonatingPersona
-    ? section('OPERATOR REQUEST', `Draft only ${launch.persona.name}'s next player turn. Do not write the character or narrator.`) + '\n[IN-WORLD RESPONSE]\n'
+    ? section('OPERATOR REQUEST', `Draft only ${launch.persona.name}'s next player turn. Do not write the character or narrator.`) + '\nContinue with in-world prose only.\n'
     : skippingPersona
-      ? section('OPERATOR TURN CONTROL', 'Player persona turn skipped. No player action, dialogue, thought or decision occurred in this turn.') + '\n[IN-WORLD RESPONSE]\n'
-      : section('PLAYER INPUT / ATTEMPT OR UTTERANCE / NOT STATE AUTHORITY', player) + '\n[IN-WORLD RESPONSE]\n';
+      ? section('OPERATOR TURN CONTROL', 'Player persona turn skipped. No player action, dialogue, thought or decision occurred in this turn.') + '\nContinue with in-world prose only.\n'
+      : section('PLAYER INPUT / ATTEMPT OR UTTERANCE / NOT STATE AUTHORITY', player) + '\nContinue with in-world prose only.\n';
   if ((prompt + influence + input).length > CONTEXT_CHARACTER_BUDGET) {
-    throw new Error('Essential scene/state and input exceed the V2 context allowance. Nothing was cut or sent. Shorten the setup/input before retrying.');
+    throw new Error('Essential scene/state and input exceed the V3 context allowance. Nothing was cut or sent. Shorten the setup/input before retrying.');
   }
 
-  const recent = session.turns.slice(-4).map((turn) => '\n[RECENT EXCHANGE / NOT ENGINE AUTHORITY]\n'
+  const recent = session.turns.slice(-4).map((turn) => '\nRecent exchange (context only, not engine authority)\n'
     + (turn.player === SKIPPED_PERSONA_TURN
-      ? '[PLAYER TURN]\n(skipped by operator)\n'
-      : `[PLAYER TURN]\n${turn.player}\n`)
-    + `[WORLD RENDER / PLAYER-VISIBLE PROSE]\n${turn.reply}\n`
-    + '[END RECENT EXCHANGE]\n');
+      ? `Player ${launch.persona.name}: (turn skipped by operator)\n`
+      : `Player ${launch.persona.name}:\n${turn.player}\n`)
+    + `${launch.character?.name ?? 'Simulation Narrator'}:\n${turn.reply}\n`);
   let history = '';
   for (let i = recent.length - 1; i >= 0; i -= 1) {
     if ((prompt + influence + recent[i] + history + input).length > CONTEXT_CHARACTER_BUDGET) {

@@ -12,7 +12,7 @@ import { SettingsPanel } from './SettingsPanel';
 import { V2Transcript } from './Transcript';
 
 const PIPELINE_STEPS = ['resolve', 'context', 'generate', 'validate', 'commit'] as const;
-const PENDING_IMPORT_KEY = 'speculus.pending-import.v2';
+const PENDING_IMPORT_KEY = 'speculus.pending-import.v3.experimental';
 
 type PendingSaveIdentity = ReturnType<typeof inspectV2Session>;
 
@@ -21,13 +21,13 @@ function claimPackage(code: string) {
   if (claim?.code === code) return claim.promise;
   const promise = fetch(`/api/v2/launch/${encodeURIComponent(code)}`, { credentials: 'same-origin', cache: 'no-store' }).then(async (response) => {
     const body = await response.json() as { package?: unknown; error?: string };
-    if (!response.ok) throw new Error(body.error || 'V2 launch could not be claimed.');
+    if (!response.ok) throw new Error(body.error || 'V3 launch could not be claimed.');
     return parseV2ClientPackage(body.package);
   });
   claim = { code, promise };
   return promise;
 }
-const messageOf = (error: unknown) => error instanceof Error ? error.message : 'V2 could not complete this action.';
+const messageOf = (error: unknown) => error instanceof Error ? error.message : 'V3 could not complete this action.';
 
 export function V2App() {
   const [session, setSession] = useState<V2Session | null>(null);
@@ -65,7 +65,7 @@ export function V2App() {
 
   useEffect(() => {
     let active = true;
-    document.title = 'Speculus V2 | Simulation Laboratory';
+    document.title = 'Speculus V3 | Simulation Laboratory';
     const code = new URLSearchParams(window.location.search).get('launch');
     void (async () => {
       try {
@@ -197,7 +197,7 @@ export function V2App() {
     url.search = '';
     url.hash = '';
     url.searchParams.set('display', session.id);
-    const target = `speculus-v2-display-${session.id.replace(/[^a-z0-9_-]+/gi, '-')}`;
+    const target = `speculus-v3-display-${session.id.replace(/[^a-z0-9_-]+/gi, '-')}`;
     const popup = window.open(url.toString(), target, 'popup=yes,width=960,height=900,resizable=yes,scrollbars=yes');
     if (!popup) {
       setError('The browser blocked the detached reader window. Allow pop-ups for Speculus and try again.');
@@ -250,11 +250,11 @@ export function V2App() {
 
   const importFile = async (file: File) => {
     if (!session || controller.current || importLock.current) return;
-    if (file.size > MAX_V2_FILE_BYTES) { setError('V2 imports are limited to 16 MB.'); return; }
+    if (file.size > MAX_V2_FILE_BYTES) { setError('V3 imports are limited to 16 MB.'); return; }
     importLock.current = true; setImporting(true);
     try {
       const next = importV2Session(await file.text(), session);
-      if (!window.confirm('Replace this V2 session with the imported transcript and state? Export the current session first if you want to keep it. V1 is unaffected.')) return;
+      if (!window.confirm('Replace this V3 session with the imported transcript and state? Export the current session first if you want to keep it. V1 is unaffected.')) return;
       setSession(next); setImportRevision((value) => value + 1); setRejected(null); setError('');
     } catch (cause) { setError(messageOf(cause)); }
     finally { importLock.current = false; setImporting(false); if (fileInput.current) fileInput.current.value = ''; }
@@ -262,7 +262,7 @@ export function V2App() {
 
   const stageRootSave = async (file?: File) => {
     if (!file) return;
-    if (file.size > MAX_V2_FILE_BYTES) { setError('V2 imports are limited to 16 MB.'); return; }
+    if (file.size > MAX_V2_FILE_BYTES) { setError('V3 imports are limited to 16 MB.'); return; }
     try {
       const raw = await file.text();
       const identity = inspectV2Session(raw);
@@ -279,7 +279,7 @@ export function V2App() {
 
   const expired = session ? session.launch.expiresAt <= Date.now() : false;
   return <main className={`spec-v2 ${session?.settings.crtEffects !== false ? 'v2-crt' : ''}`}>
-    <header className="v2-masthead"><div><div className="v2-brand"><h1>SPECULUS</h1><span>V2</span><span className="v2-badge">Experimental</span></div><p>Howling Whispers / Simulation lab</p></div>
+    <header className="v2-masthead"><div><div className="v2-brand"><h1>SPECULUS</h1><span>V3</span><span className="v2-badge">Experimental / World Brain lab</span></div><p>Howling Whispers / Simulation lab</p></div>
       <div className="v2-connection"><span>{session ? 'ORBIS LINK' : 'SYSTEM MEDIUM'}</span><small>{session ? expired ? 'Authorization expired' : 'Package loaded' : 'Orbis launch or raw save'}</small>
         {session && <nav aria-label="Panel visibility"><button type="button" aria-pressed={showSettings} onClick={() => setShowSettings(!showSettings)}>Setup</button><button type="button" aria-pressed={showDiagnostics} onClick={() => setShowDiagnostics(!showDiagnostics)}>Diagnostics</button></nav>}
       </div>
@@ -301,12 +301,12 @@ export function V2App() {
           <button disabled={busy} onClick={saveNow}>Save now</button>
           <button disabled={busy} onClick={download}>Export raw</button><button disabled={busy} onClick={() => fileInput.current?.click()}>Import raw</button>
           <button className="v2-delete" disabled={busy || !session.turns.length || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => {
-            if (window.confirm('Remove the latest player/reply pair and its resolved state from this V2 session?')) { setSession(deleteLastTurn(session)); setRejected(null); }
+            if (window.confirm('Remove the latest player/reply pair and its resolved state from this V3 session?')) { setSession(deleteLastTurn(session)); setRejected(null); }
           }}>Delete latest</button>
-          <input hidden ref={fileInput} type="file" accept=".json,application/json" aria-label="Import V2 session" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); }} />
+          <input hidden ref={fileInput} type="file" accept=".json,application/json" aria-label="Import V3 session" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); }} />
         </div>
         {transcriptDetached && <div className="v2-detached-note"><span>Reading display detached</span><small>Move the reader window to any monitor. Closing it restores the transcript here.</small></div>}
-        {(error || storageError || expired) && <div className="v2-fault" role="alert">{storageError || error || 'Authorization expired. Export this session, launch the same record from Orbis, then import the V2 export.'}</div>}
+        {(error || storageError || expired) && <div className="v2-fault" role="alert">{storageError || error || 'Authorization expired. Export this session, launch the same record from Orbis, then import the V3 export.'}</div>}
         <form className="v2-composer" onSubmit={(event) => { event.preventDefault(); void generate(); }}>
           <textarea aria-label="Your next turn" placeholder="What do you do next?" value={session.draft} maxLength={16000} disabled={busy} onChange={(event) => setSession({ ...session, draft: event.target.value })} onKeyDown={(event) => {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void generate(); }
@@ -316,20 +316,20 @@ export function V2App() {
       </section>
       {showDiagnostics && <V2DiagnosticsPanel session={session} rejected={rejected} />}
     </div> : <section className="v2-panel v2-boot">
-      <span className="v2-eyebrow">V2 / BOOT SEQUENCE</span>
+      <span className="v2-eyebrow">V3 / BOOT SEQUENCE</span>
       <h2>{booting ? 'Reading simulation medium...' : pendingSave ? 'Save identified' : 'Open a simulation or load a save'}</h2>
-      {booting ? <p role="status">Checking this tab for a launch package or existing V2 session.</p> : pendingSave ? <>
+      {booting ? <p role="status">Checking this tab for a launch package or existing V3 session.</p> : pendingSave ? <>
         <p role="status">{pendingSave.name ?? pendingSave.world?.name ?? 'Speculus save'} · {pendingSave.location?.name ?? 'no saved location'} · {pendingSave.persona?.name ?? 'saved persona'}</p>
         <p>The raw save is staged in this tab. Open its matching Orbis record at revision <strong>{pendingSave.revision}</strong> and choose Simulate. Speculus will consume the staged save automatically after Orbis issues fresh authorization.</p>
         <button type="button" onClick={() => rootFileInput.current?.click()}>Choose a different raw save</button>
       </> : <>
-        <p>Start from Orbis as usual, or identify a previously exported V2 save here. Raw saves never contain reusable launch authorization.</p>
+        <p>Start from Orbis as usual, or identify a previously exported V3 save here. Raw saves never contain reusable launch authorization.</p>
         <button type="button" onClick={() => rootFileInput.current?.click()}>Load raw save</button>
       </>}
       {error && <div className="v2-fault" role="alert">{error}</div>}
-      <input hidden ref={rootFileInput} type="file" accept=".json,application/json" aria-label="Load V2 raw save" onChange={(event) => void stageRootSave(event.target.files?.[0])} />
-      <small>V1 and V2 sessions are separate. No V1 data has been loaded or modified.</small>
+      <input hidden ref={rootFileInput} type="file" accept=".json,application/json" aria-label="Load V3 raw save" onChange={(event) => void stageRootSave(event.target.files?.[0])} />
+      <small>V1 and V3 sessions are separate. No V1 data has been loaded or modified.</small>
     </section>}
-    <footer className="v2-status" aria-live="polite"><div>{PIPELINE_STEPS.map((step) => <span key={step} className={phase === step ? 'is-active' : phaseSeen.includes(step) ? 'is-complete' : ''}><i />{step}</span>)}</div><span>{phase ? phase.toUpperCase() : error || storageError ? 'FAULT' : session ? expired ? 'RELAUNCH REQUIRED' : transcriptDetached ? 'READER DETACHED' : 'READY' : pendingSave ? 'SAVE STAGED' : 'STANDBY'}</span><small>/v2</small></footer>
+    <footer className="v2-status" aria-live="polite"><div>{PIPELINE_STEPS.map((step) => <span key={step} className={phase === step ? 'is-active' : phaseSeen.includes(step) ? 'is-complete' : ''}><i />{step}</span>)}</div><span>{phase ? phase.toUpperCase() : error || storageError ? 'FAULT' : session ? expired ? 'RELAUNCH REQUIRED' : transcriptDetached ? 'READER DETACHED' : 'READY' : pendingSave ? 'SAVE STAGED' : 'STANDBY'}</span><small>/v3</small></footer>
   </main>;
 }

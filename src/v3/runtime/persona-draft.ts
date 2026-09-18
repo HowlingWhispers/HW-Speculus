@@ -1,14 +1,14 @@
 import type { ProviderAdapter } from '../../runtime/providers/types';
 import { compileV2Context, CONTEXT_CHARACTER_BUDGET } from './context';
-import { decodeV2SerializedRoleplayArtifacts, normalizeV2RoleplayFormat, type EnginePhase } from './engine';
+import { decodeV2SerializedRoleplayArtifacts, normalizeV2RoleplayFormat, stripV3ProtocolArtifacts, type EnginePhase } from './engine';
 import { settingsSchema, type V2Session } from './session';
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const RESPONSE_MARKER = '\n[IN-WORLD RESPONSE]\n';
+const RESPONSE_MARKER = '\nContinue with in-world prose only.\n';
 
 function withExistingPersonaDraft(prompt: string, draft: string) {
   if (!draft.trim()) return prompt;
-  if (!prompt.endsWith(RESPONSE_MARKER)) throw new Error('V2 impersonation response boundary is missing.');
+  if (!prompt.endsWith(RESPONSE_MARKER)) throw new Error('V3 impersonation response boundary is missing.');
   const guidance = [
     '\nThe player composer already contains the following operator-authored text. Treat it as fixed context and as the beginning of this same next player turn. Preserve it exactly:',
     draft,
@@ -18,7 +18,7 @@ function withExistingPersonaDraft(prompt: string, draft: string) {
   ].join('\n');
   const next = `${prompt.slice(0, -RESPONSE_MARKER.length)}${guidance}${RESPONSE_MARKER}`;
   if (next.length > CONTEXT_CHARACTER_BUDGET) {
-    throw new Error('The existing player draft plus required V2 context exceeds the context allowance. Shorten the draft before using Impersonate.');
+    throw new Error('The existing player draft plus required V3 context exceeds the context allowance. Shorten the draft before using Impersonate.');
   }
   return next;
 }
@@ -43,7 +43,7 @@ export async function generateV2PersonaDraft(session: V2Session, provider: Provi
 } = {}): Promise<string> {
   const settings = settingsSchema.parse(session.settings);
   if (options.signal?.aborted) throw new Error('Generation cancelled. No provider call was made.');
-  if (session.launch.expiresAt <= Date.now()) throw new Error('V2 authorization expired. Relaunch from Orbis, then import your V2 export.');
+  if (session.launch.expiresAt <= Date.now()) throw new Error('V3 authorization expired. Relaunch from Orbis, then import your V3 export.');
 
   options.onPhase?.('context');
   const compiled = compileV2Context(session, '', 'impersonate-persona');
@@ -60,7 +60,7 @@ export async function generateV2PersonaDraft(session: V2Session, provider: Provi
 
   options.onPhase?.('validate');
   const raw = result.text.trim();
-  const decoded = decodeV2SerializedRoleplayArtifacts(raw);
+  const decoded = stripV3ProtocolArtifacts(decodeV2SerializedRoleplayArtifacts(raw));
   if (!decoded) throw new Error('The model returned an empty player draft.');
   if (result.metadata.completionStatus === 'max_tokens') {
     throw new Error('The generated player draft reached the hard output ceiling and was discarded instead of inserting a cut-off turn. Try again or use a larger output preset.');

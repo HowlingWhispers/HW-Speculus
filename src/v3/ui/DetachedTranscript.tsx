@@ -9,7 +9,7 @@ export function V2DetachedTranscript({ sessionId }: { sessionId: string }) {
   const supported = typeof BroadcastChannel !== 'undefined';
 
   useEffect(() => {
-    document.title = 'Speculus V2 | Detached Reader';
+    document.title = 'Speculus V3 | Detached Reader';
     if (!supported) return;
     const channel = new BroadcastChannel(detachedTranscriptChannelName(sessionId));
     const announceReady = () => channel.postMessage({ type: 'ready', sessionId } satisfies DetachedTranscriptMessage);
@@ -36,14 +36,14 @@ export function V2DetachedTranscript({ sessionId }: { sessionId: string }) {
 
   return <main className={`spec-v2 v2-detached-reader ${session?.settings.crtEffects !== false ? 'v2-crt' : ''}`}>
     <header className="v2-masthead v2-reader-masthead">
-      <div><div className="v2-brand"><h1>SPECULUS</h1><span>V2</span><span className="v2-badge">Detached reader</span></div><p>Live world render / read only</p></div>
+      <div><div className="v2-brand"><h1>SPECULUS</h1><span>V3</span><span className="v2-badge">Detached reader</span></div><p>Live world render / read only</p></div>
       <div className="v2-connection"><span>{session ? 'LIVE LINK' : 'WAITING'}</span><small>{session ? session.launch.primaryAsset.name : supported ? 'Waiting for the main Speculus window' : 'BroadcastChannel is not supported in this browser'}</small></div>
     </header>
     <section className="v2-panel v2-reader-panel" aria-label="Detached roleplay transcript">
       {session
         ? <V2Transcript session={session} busy={busy} />
-        : <div className="v2-reader-wait"><span className="v2-eyebrow">DETACHED DISPLAY</span><h2>{supported ? 'Waiting for live transcript...' : 'Detached reader unavailable'}</h2><p>{supported ? 'Keep the main Speculus V2 window open. This reader will synchronize automatically.' : 'Use a browser with BroadcastChannel support or keep the transcript in the main Speculus window.'}</p></div>}
+        : <div className="v2-reader-wait"><span className="v2-eyebrow">DETACHED DISPLAY</span><h2>{supported ? 'Waiting for live transcript...' : 'Detached reader unavailable'}</h2><p>{supported ? 'Keep the main Speculus V3 window open. This reader will synchronize automatically.' : 'Use a browser with BroadcastChannel support or keep the transcript in the main Speculus window.'}</p></div>}
     </section>
-    <footer className="v2-status" aria-live="polite"><div><span className={session ? 'is-complete' : 'is-active'}><i />{session ? 'linked' : 'waiting'}</span><span className={busy ? 'is-active' : ''}><i />{busy ? 'generation active' : 'reader ready'}</span></div><span>READ ONLY</span><small>/v2/display</small></footer>
+    <footer className="v2-status" aria-live="polite"><div><span className={session ? 'is-complete' : 'is-active'}><i />{session ? 'linked' : 'waiting'}</span><span className={busy ? 'is-active' : ''}><i />{busy ? 'generation active' : 'reader ready'}</span></div><span>READ ONLY</span><small>/v3/display</small></footer>
   </main>;
 }

@@ -54,7 +54,7 @@ export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; 
     presentHere: presentIds.has(actor.id), knownFacts: actor.knowledge.length,
   }));
   const rawView = useMemo(() => ({
-    version: session.version, engine: session.engine, source: session.launch.primaryAsset,
+    runtime: 'v3-experimental', compatibilitySchema: { version: session.version, engine: session.engine }, source: session.launch.primaryAsset,
     world: session.world, settings: session.settings, turns: session.turns, events: session.events, nextTurn: session.nextTurn,
   }), [session]);
   const contextView = diagnostic ? {

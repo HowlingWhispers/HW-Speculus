@@ -3,7 +3,8 @@ import { v2StoredPackageSchema, type V2ClientPackage } from '../contracts/launch
 import { eventSchema, settingsSchema, turnSchema, type V2Session } from '../runtime/session';
 import { assertWorldCanon, assetsFor, createWorld, worldSchema } from '../runtime/world';
 
-export const V2_STORAGE_KEY = 'speculus.session.v2';
+export const V2_STORAGE_KEY = 'speculus.session.v3.experimental';
+// V3 bootstrap intentionally keeps the V2 raw transfer schema so switching back remains safe.
 export const V2_EXPORT_FORMAT = 'speculus-v2-session';
 export const MAX_V2_FILE_BYTES = 16 * 1024 * 1024;
 const stateSchema = z.object({
@@ -99,16 +100,16 @@ export function exportV2Session(session: V2Session, now = Date.now()): string {
 }
 
 export function inspectV2Session(raw: string) {
-  if (new Blob([raw]).size > MAX_V2_FILE_BYTES) throw new Error('The V2 file exceeds 16 MB.');
+  if (new Blob([raw]).size > MAX_V2_FILE_BYTES) throw new Error('The V3 experimental file exceeds 16 MB.');
   const parsed = transferSchema.safeParse(JSON.parse(raw));
-  if (!parsed.success) throw new Error('This is not a supported V2 export. V1 files must stay in V1.');
+  if (!parsed.success) throw new Error('This is not a supported V2-compatible export. V1 files must stay in V1.');
   return parsed.data.source;
 }
 
 export function importV2Session(raw: string, current: V2Session): V2Session {
-  if (new Blob([raw]).size > MAX_V2_FILE_BYTES) throw new Error('The V2 file exceeds 16 MB.');
+  if (new Blob([raw]).size > MAX_V2_FILE_BYTES) throw new Error('The V3 experimental file exceeds 16 MB.');
   const parsed = transferSchema.safeParse(JSON.parse(raw));
-  if (!parsed.success) throw new Error('This is not a supported V2 export. V1 files must stay in V1.');
+  if (!parsed.success) throw new Error('This is not a supported V2-compatible export. V1 files must stay in V1.');
   const value = parsed.data;
   const source = current.launch.primaryAsset;
   if (value.source.id !== source.id || value.source.type !== source.type || value.source.revision !== source.revision) {

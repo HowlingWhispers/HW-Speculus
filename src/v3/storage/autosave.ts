@@ -1,8 +1,8 @@
 import type { V2Session } from '../runtime/session';
 import { exportV2Session, inspectV2Session } from './session';
 
-export const V2_AUTOSAVE_PREFIX = 'speculus.autosave.v2:';
-export const V2_LAST_AUTOSAVE_KEY = 'speculus.autosave.v2:last';
+export const V2_AUTOSAVE_PREFIX = 'speculus.autosave.v3.experimental:';
+export const V2_LAST_AUTOSAVE_KEY = 'speculus.autosave.v3.experimental:last';
 
 function safePart(value: string) {
   return encodeURIComponent(value).slice(0, 240);

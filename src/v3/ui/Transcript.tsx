@@ -35,7 +35,7 @@ export function V2Transcript({ session, busy }: { session: V2Session; busy: bool
       <span className="v2-eyebrow">SIMULATION MEDIUM LOADED</span>
       <h2>{session.launch.primaryAsset.name}</h2>
       <p>{session.launch.scene || 'Begin with your first action or line of dialogue.'}</p>
-      <small>V2 foundation: engine state is explicit. Narration cannot move actors or advance time.</small>
+      <small>V3 experimental foundation: V2 state authority is preserved while the new runtime is developed.</small>
     </div>}
     {session.turns.map((turn, index) => <div key={turn.id} className="v2-exchange">
       {isSkippedPersonaTurn(turn.player)

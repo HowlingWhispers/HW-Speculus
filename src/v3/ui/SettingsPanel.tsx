@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { DEFAULT_TEXT_COLORS, OUTPUT_PRESETS, type V2Session, type V2Settings } from '../runtime/session';
+import { V2_STORAGE_KEY, saveV2Session } from '../storage/session';
 import { assetsFor, worldClock, type WorldAction } from '../runtime/world';
 
 export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
@@ -15,6 +16,12 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
   const [fact, setFact] = useState('');
   const [stopText, setStopText] = useState(settings.stopSequences.join('\n'));
   const actorId = launch.character?.id ?? launch.persona.id;
+  const switchToV2 = () => {
+    saveV2Session(session);
+    const raw = sessionStorage.getItem(V2_STORAGE_KEY);
+    if (raw) sessionStorage.setItem('speculus.session.v2', raw);
+    window.location.assign('/v2');
+  };
   const numeric = (label: string, key: keyof Pick<V2Settings, 'maxTokens' | 'temperature' | 'topK' | 'topP' | 'presencePenalty' | 'frequencyPenalty'>, min: number, max: number, step = 1) =>
     <label className="v2-field"><span>{label}</span><input type="number" min={min} max={max} step={step} value={settings[key]} onChange={(event) => {
       const value = event.target.valueAsNumber;
@@ -24,6 +31,10 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
     <label className="v2-color-field"><span>{label}</span><span className="v2-color-control"><input type="color" value={settings[key]} onChange={(event) => onSettings({ [key]: event.target.value })} /><code>{settings[key]}</code></span></label>;
 
   return <aside className="v2-panel v2-settings" aria-label="Simulation settings"><fieldset disabled={disabled}>
+    <section><h2>Engine</h2>
+      <div className="v2-output" role="group" aria-label="Simulation engine"><button type="button" aria-pressed="false" onClick={switchToV2}>V2 Stable</button><button type="button" aria-pressed="true" disabled>V3 Experimental</button></div>
+      <small>V3 is built directly on the V2 baseline. Its session and autosave stores are isolated while the experiment replaces V2 systems incrementally.</small>
+    </section>
     <section><h2>Session</h2><dl className="v2-fields">
       <dt>World</dt><dd>{assets.find((asset) => asset.type === 'world')?.name ?? 'Not supplied'}</dd>
       <dt>Location</dt><dd>{assets.find((asset) => asset.id === world.locationId)?.name ?? 'Not anchored'}</dd>

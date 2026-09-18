@@ -1,6 +1,6 @@
 import type { V2Session } from '../runtime/session';
 
-export const detachedTranscriptChannelName = (sessionId: string) => `speculus-v2-transcript:${sessionId}`;
+export const detachedTranscriptChannelName = (sessionId: string) => `speculus-v3-transcript:${sessionId}`;
 
 export type DetachedTranscriptMessage =
   | { type: 'probe'; sessionId: string }

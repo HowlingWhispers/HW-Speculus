@@ -9,7 +9,29 @@ export class V2DraftRejected extends Error {
   constructor(message: string, readonly diagnostics: V2Diagnostics) { super(message); }
 }
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+');
+
+const V3_LEGACY_PROTOCOL_BLOCKS = [
+  /\[RECENT EXCHANGE \/ NOT ENGINE AUTHORITY\][\s\S]*?\[END RECENT EXCHANGE\]/gi,
+  /\[PLAYER TURN\][\s\S]*?\[WORLD RENDER \/ PLAYER-VISIBLE PROSE\]/gi,
+  /\[PLAYER TURN\][\s\S]*?\[END PLAYER TURN\]/gi,
+];
+const V3_LEGACY_PROTOCOL_MARKERS = [
+  /\[(?:PLAYER TURN|END PLAYER TURN|ASSISTANT TURN|END ASSISTANT TURN|END TURN|END RESPONSE|END ASSISTANT RESPONSE|WORLD RENDER \/ PLAYER-VISIBLE PROSE|IN-WORLD RESPONSE|END RECENT EXCHANGE|SYSTEM|NARRATOR)\]/gi,
+];
+
+export function stripV3ProtocolArtifacts(text: string) {
+  let cleaned = text;
+  for (const pattern of V3_LEGACY_PROTOCOL_BLOCKS) cleaned = cleaned.replace(pattern, '');
+  for (const pattern of V3_LEGACY_PROTOCOL_MARKERS) cleaned = cleaned.replace(pattern, '');
+  return cleaned
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(?:END\s+)?(?:PLAYER|USER|ASSISTANT|SYSTEM|NARRATOR)\s+TURN\s*:?\s*$/i.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 function normalizeActionChunk(value: string) {
   if (!value.trim()) return value;
@@ -71,7 +93,7 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
 } = {}): Promise<V2Session> {
   const settings = settingsSchema.parse(session.settings);
   if (options.signal?.aborted) throw new Error('Generation cancelled. No provider call was made.');
-  if (session.launch.expiresAt <= Date.now()) throw new Error('V2 authorization expired. Relaunch from Orbis, then import your V2 export.');
+  if (session.launch.expiresAt <= Date.now()) throw new Error('V3 authorization expired. Relaunch from Orbis, then import your V2 export.');
   const last = session.turns.at(-1);
   if (options.reroll && (!last || last.worldRevision !== session.world.revision)) {
     throw new Error('Reroll requires the latest turn and its unchanged world state.');
@@ -80,7 +102,7 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   const player = skipPersona ? SKIPPED_PERSONA_TURN : (options.reroll ? last!.player : session.draft).trim();
   if (!skipPersona && (!player || player.length > 16000)) throw new Error('Write a player turn between 1 and 16000 characters.');
   const base = options.reroll ? { ...session, turns: session.turns.slice(0, -1) } : session;
-  const id = options.reroll ? last!.id : `v2:${session.id}:${session.nextTurn}`;
+  const id = options.reroll ? last!.id : `v3:${session.id}:${session.nextTurn}`;
 
   options.onPhase?.('resolve');
   const resolved = resolveV2PlayerTurn(base, player, { skipPersona, reroll: options.reroll });
@@ -101,9 +123,10 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   const rawReply = result.text.trim();
   const rawIssues = validateV2Reply(rawReply, session.launch.persona.name);
   const decodedReply = decodeV2SerializedRoleplayArtifacts(rawReply);
-  const decodedIssues = validateV2Reply(decodedReply, session.launch.persona.name);
+  const sanitizedReply = stripV3ProtocolArtifacts(decodedReply);
+  const decodedIssues = validateV2Reply(sanitizedReply, session.launch.persona.name);
   const canNormalize = result.metadata.completionStatus !== 'max_tokens' && rawIssues.length === 0 && decodedIssues.length === 0;
-  const normalizedReply = canNormalize ? normalizeV2RoleplayFormat(decodedReply) : decodedReply;
+  const normalizedReply = canNormalize ? normalizeV2RoleplayFormat(sanitizedReply) : sanitizedReply;
   const issues = [...new Set([...rawIssues, ...decodedIssues, ...validateV2Reply(normalizedReply, session.launch.persona.name)])];
   if (result.metadata.completionStatus === 'max_tokens') {
     issues.push('The provider reached the hard output ceiling. The cut-off reply was discarded instead of being committed.');
@@ -113,6 +136,7 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   if (skipPersona) warnings.push('The player persona turn was explicitly skipped. The renderer was forbidden from inventing a player action or decision.');
   if (options.reroll) warnings.push('Reroll reused the already-resolved world state. Elapsed time and narrative dice were not rolled or committed twice.');
   if (decodedReply !== rawReply) warnings.push('Serialized roleplay escape sequences were decoded before commit.');
+  if (sanitizedReply !== decodedReply) warnings.push('Legacy Speculus turn/control markers were stripped before commit.');
   if (canNormalize && normalizedReply !== decodedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
   if (compiled.omitted.length) warnings.push('Some history/canon was omitted. Inspect the Context tab for the exact list.');
   const diagnostics: V2Diagnostics = {
