@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { V2ClientPackage } from '../contracts/launch';
+import { emptyRuntimeDomains, runtimeDomainsSchema } from './state-domains';
 
 export const SECONDS_PER_DAY = 86_400;
 export const DEFAULT_START_SECOND_OF_DAY = 8 * 3600;
@@ -15,6 +16,7 @@ export const worldSchema = z.object({
   simulationDay: z.number().int().positive().safe().default(1),
   timeOfDaySeconds: z.number().int().min(0).max(SECONDS_PER_DAY - 1).default(DEFAULT_START_SECOND_OF_DAY),
   locationId: z.string().nullable(), actors: z.array(actorSchema).max(200),
+  domains: runtimeDomainsSchema.default(emptyRuntimeDomains()),
 });
 export type WorldState = z.infer<typeof worldSchema>;
 export type WorldAction =
@@ -94,6 +96,7 @@ export function createWorld(launch: V2ClientPackage): WorldState {
       { id: launch.persona.id, name: launch.persona.name, role: 'player', locationId, knowledge: [] },
       ...(launch.character ? [{ id: launch.character.id, name: launch.character.name, role: 'character' as const, locationId: null, knowledge: [] }] : []),
     ],
+    domains: emptyRuntimeDomains(),
   };
 }
 
