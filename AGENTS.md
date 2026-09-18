@@ -14,5 +14,5 @@
 - Stable character turn IDs own relationship and automatic turn-resolution events. Rerolls reuse/replace the same resolved turn state rather than advancing state again; deletion removes that turn's owned resolution state when safe.
 - Preserve RP formatting: dialogue in double quotes, action/narration in single asterisks, inner voice in square brackets.
 - Respect reduced motion and keep CRT effects readable.
-- V3 is the incubation path for the runtime that will eventually be promoted/renamed to Fabula; do not build a separate parallel Fabula runtime. Until that promotion, keep accounts, Discord, multiplayer and World Forge out of this repository. The narrow Orbis launch/generation bridge plus raw-save recovery handoff are the only allowed integrations.
+- V3 and later Speculus versions are development grounds for systems that may later contribute to Fabula. Do not assume V3 will be renamed into Fabula or that current Speculus UI/theme is Fabula design. Fabula gets its own design phase later. Keep reusable runtime systems modular and portable. Accounts, Discord, multiplayer and World Forge remain outside this repository; the narrow Orbis launch/generation bridge plus raw-save recovery handoff are the only allowed integrations.
 - Before completion run `npm test`, `npm run lint`, and `npm run build`.

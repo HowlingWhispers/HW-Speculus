@@ -21,8 +21,10 @@ The first major V3-only subsystem after the bootstrap is the editable World Brai
 V3-only settings belong in the V3 settings experience. V2 settings and stored values must remain intact so the user can always return to the stable engine.
 
 
-## Fabula promotion path
+## Contribution toward Fabula
 
-V3 is not a throwaway experiment. It is the runtime incubation path intended to become Fabula once the state kernel, World Brain contract, continuity systems and gameplay mechanics are mature. New V3 architecture should therefore be product-name-neutral where practical and should not create a second future Fabula implementation beside it.
+V3 is not throwaway work. Its state kernel, World Brain contract, continuity systems and gameplay mechanics can contribute proven technology and design lessons to Fabula later. V3 itself is not yet the official Fabula implementation, interface, visual design or theme, and no automatic rename/promotion is assumed.
 
-See `v3-fabula-roadmap.md` for the phased architecture and promotion criteria.
+Keep reusable systems modular and product-name-neutral where practical so the later Fabula design can adopt, adapt or replace them deliberately.
+
+See `v3-fabula-roadmap.md` for the current Speculus development path and the systems intended to inform Fabula.

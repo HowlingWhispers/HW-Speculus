@@ -1,6 +1,6 @@
-# Speculus V3 to Fabula roadmap
+# Speculus V3 contributions toward Fabula
 
-Speculus V3 is the experimental runtime that will be promoted into Fabula when it is mature enough. It is not a disposable prototype and Fabula is not planned as a second rewrite beside it.
+Speculus V3 is the experimental runtime where systems can be developed, tested and proven for possible use in Fabula. It is not a disposable prototype, but it is also not the official Fabula design or a promise that Speculus will simply be renamed. Fabula's architecture, interface, visual design and theme will be designed separately later.
 
 V2 remains the stable fallback while V3 replaces inherited systems in controlled, testable steps.
 
@@ -34,7 +34,7 @@ V3 should converge on these rules:
 7. Context is a projection of canon plus runtime state, assembled as whole typed blocks with explicit priorities and budgets.
 8. Internal protocol/state markers never enter visible story text.
 9. Failures do not create half-committed turns.
-10. V3 features are designed to survive the eventual product rename to Fabula.
+10. V3 features that may benefit Fabula should be modular enough to reuse or adapt without forcing the current Speculus product design onto Fabula.
 
 ## Target runtime layers
 
@@ -239,17 +239,19 @@ Provider credentials remain outside V3.
 - factions/world events
 - optional map/spatial state
 
-### Phase F: Fabula promotion
+### Phase F: Fabula handoff readiness
 
-Promote V3 to Fabula only after:
+This phase does not rename Speculus into Fabula. It identifies which V3 systems have become stable enough to serve as inputs to the later official Fabula design.
 
-- V2 fallback is no longer required for ordinary play
-- launch/save contracts are versioned and migration-tested
+A system is a strong Fabula candidate when:
+
+- its launch/save contracts are versioned and migration-tested
 - World Brain editing/pinning works through Orbis
 - no state domain relies on prose memory as authority
 - reroll/undo/delete do not double-apply state
 - long-running continuity survives save/load
 - diagnostics can explain what context and state produced a turn
-- gameplay systems are stable enough to be called a runtime rather than a simulator experiment
+- gameplay mechanics have clear boundaries and tests
+- the implementation is modular enough to reuse without carrying over the Speculus UI/theme
 
-The promotion should be a product/version transition over the same evolved runtime, not a rewrite.
+When Fabula design begins, each proven subsystem can be adopted, adapted or replaced. The current Speculus interface and theme are not Fabula design decisions.
