@@ -19,3 +19,10 @@ V3 must not expose internal prompt scaffolding in the visible roleplay transcrip
 The first major V3-only subsystem after the bootstrap is the editable World Brain. It should define world-wide simulation and narrative behavior while character/persona records remain data interpreted through that world brain. A maintained standard brain will be the fallback for worlds that do not provide a custom brain.
 
 V3-only settings belong in the V3 settings experience. V2 settings and stored values must remain intact so the user can always return to the stable engine.
+
+
+## Fabula promotion path
+
+V3 is not a throwaway experiment. It is the runtime incubation path intended to become Fabula once the state kernel, World Brain contract, continuity systems and gameplay mechanics are mature. New V3 architecture should therefore be product-name-neutral where practical and should not create a second future Fabula implementation beside it.
+
+See `v3-fabula-roadmap.md` for the phased architecture and promotion criteria.
