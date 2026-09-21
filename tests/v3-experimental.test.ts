@@ -43,11 +43,11 @@ describe('V3 experimental protocol isolation', () => {
     const packet = compileV2Context(next, next.draft);
 
     expect(packet.prompt).toContain('SPECULUS V3 EXPERIMENTAL');
-    expect(packet.prompt).toContain('Continue with in-world prose only.');
+    expect(packet.prompt).toContain('[IN-WORLD RESPONSE]');
     expect(packet.prompt).toContain('Recent exchange (context only, not engine authority)');
     expect(packet.prompt).not.toContain('[PLAYER TURN]');
     expect(packet.prompt).not.toContain('[END PLAYER TURN]');
-    expect(packet.prompt).not.toContain('[IN-WORLD RESPONSE]');
+    
     expect(packet.prompt).not.toContain('[WORLD RENDER / PLAYER-VISIBLE PROSE]');
     expect(packet.prompt).not.toContain('[END RECENT EXCHANGE]');
   });
