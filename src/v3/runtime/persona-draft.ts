@@ -4,7 +4,7 @@ import { decodeV2SerializedRoleplayArtifacts, normalizeV2RoleplayFormat, stripV3
 import { settingsSchema, type V2Session } from './session';
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const RESPONSE_MARKER = '\nContinue with in-world prose only.\n';
+const RESPONSE_MARKER = '\n[IN-WORLD RESPONSE]\n';
 
 function withExistingPersonaDraft(prompt: string, draft: string) {
   if (!draft.trim()) return prompt;
