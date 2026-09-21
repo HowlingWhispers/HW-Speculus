@@ -5,6 +5,7 @@ import { generateV2Turn, V2DraftRejected, type EnginePhase } from '../runtime/en
 import { generateV2PersonaDraft } from '../runtime/persona-draft';
 import { retractLatestTurnFromStudium, submitLatestTurnToStudium } from '../research/studium';
 import { createV2Session, deleteLastTurn, operateWorld, type V2Diagnostics, type V2Session } from '../runtime/session';
+import { acceptStateProposal, rejectStateProposal } from '../runtime/state-review';
 import { loadLatestV2LocalAutosave, saveV2LocalAutosave } from '../storage/autosave';
 import { exportV2Session, importV2Session, inspectV2Session, loadV2Session, MAX_V2_FILE_BYTES, saveV2Session, v2ExportFilename } from '../storage/session';
 import { detachedTranscriptChannelName, type DetachedTranscriptMessage } from './detached-channel';
@@ -324,6 +325,23 @@ export function V2App() {
           </details>
           <input hidden ref={fileInput} type="file" accept=".json,application/json" aria-label="Import V3 session" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); }} />
         </div>
+        {session.stateProposals.length > 0 && <section className="v2-state-review" aria-label="State review">
+          <header><div><span className="v2-eyebrow">Review only</span><h3>State proposals</h3></div><strong>{session.stateProposals.length}</strong></header>
+          <small>Speculus noticed possible state changes in committed prose. Nothing below is authoritative until you accept it.</small>
+          <div className="v2-state-review-list">
+            {session.stateProposals.map((proposal) => <article key={proposal.id}>
+              <p>{proposal.summary}</p>
+              <small>{proposal.kind} · source {proposal.sourceTurnId}</small>
+              <div>
+                <button type="button" disabled={busy} onClick={() => {
+                  try { setSession(acceptStateProposal(session, proposal.id)); setError(''); }
+                  catch (cause) { setError(messageOf(cause)); }
+                }}>Accept</button>
+                <button type="button" disabled={busy} onClick={() => setSession(rejectStateProposal(session, proposal.id))}>Reject</button>
+              </div>
+            </article>)}
+          </div>
+        </section>}
         {transcriptDetached && <div className="v2-detached-note"><span>Reading display detached</span><small>Move the reader window to any monitor. Closing it restores the transcript here.</small></div>}
         {(error || storageError || expired) && <div className="v2-fault" role="alert">{storageError || error || 'Authorization expired. Export this session, launch the same record from Orbis, then import the V3 export.'}</div>}
         <form className="v2-composer" onSubmit={(event) => { event.preventDefault(); void generate(); }}>
