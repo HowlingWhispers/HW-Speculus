@@ -177,3 +177,177 @@ body:has(.spec-v2) { margin: 0; background: #101715; }
 @media (max-width: 560px) {
   .spec-v2 .v2-tool-menu > div { position: fixed; left: 12px; right: 12px; bottom: 64px; min-width: 0; }
 }
+
+
+/* Viewport-safe tool menus and fluid compact layout */
+.v2-tool-menu-trigger {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid #49695e;
+  border-radius: 2px;
+  cursor: pointer;
+  background: #14231e;
+  color: #9fb1a7;
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.v2-tool-menu-trigger:hover,
+.v2-tool-menu-trigger[aria-expanded='true'] {
+  color: #e3e8df;
+  border-color: #86c9ae;
+}
+
+.v2-tool-popover {
+  position: fixed;
+  z-index: 2147483647;
+  margin: 0;
+  min-width: 170px;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  display: none;
+  overflow: auto;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid #49695e;
+  border-radius: 2px;
+  background: #101a16;
+  color: #dbe3dc;
+  box-shadow: 0 14px 38px rgba(0,0,0,.55);
+  overscroll-behavior: contain;
+}
+
+.v2-tool-popover:popover-open,
+.v2-tool-popover--fallback-open {
+  display: grid;
+}
+
+.v2-tool-popover button {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 1px solid #49695e;
+  border-radius: 2px;
+  background: #14231e;
+  color: #a9c7ba;
+  text-align: left;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.v2-tool-popover button:hover:not(:disabled) {
+  border-color: #86c9ae;
+  background: #254438;
+  color: #e3e8df;
+}
+
+.v2-tool-popover button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+@media (max-width: 780px) {
+  .spec-v2 .v2-masthead {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .spec-v2 .v2-connection {
+    width: 100%;
+    border-left: 0;
+    padding-left: 0;
+    text-align: left;
+  }
+
+  .spec-v2 .v2-connection nav,
+  .spec-v2 .v2-transcript-tools {
+    flex-wrap: wrap;
+  }
+
+  .spec-v2 .v2-panel-heading,
+  .spec-v2 .v2-transcript {
+    padding-left: clamp(10px, 3vw, 15px);
+    padding-right: clamp(10px, 3vw, 15px);
+  }
+}
+
+@media (max-width: 420px) {
+  .spec-v2 {
+    padding: 5px;
+    gap: 5px;
+  }
+
+  .spec-v2 h1 {
+    font-size: clamp(20px, 8vw, 26px);
+    letter-spacing: .12em;
+  }
+
+  .spec-v2 .v2-brand {
+    gap: 7px;
+  }
+
+  .spec-v2 .v2-masthead,
+  .spec-v2 .v2-panel-heading {
+    padding: 11px;
+  }
+
+  .spec-v2 .v2-prose {
+    font-size: clamp(16px, 5vw, 18px);
+    line-height: 1.7;
+  }
+
+  .spec-v2 .v2-player .v2-prose {
+    font-size: clamp(15px, 4.6vw, 17px);
+  }
+
+  .spec-v2 .v2-composer {
+    margin-left: 6px;
+    margin-right: 6px;
+  }
+
+  .spec-v2 .v2-composer > div {
+    flex-wrap: wrap;
+  }
+
+  .spec-v2 .v2-composer small {
+    flex: 1 1 100%;
+  }
+
+  .spec-v2 .v2-status {
+    padding-left: 9px;
+    padding-right: 9px;
+  }
+
+  .spec-v2 .v2-status > div {
+    gap: 8px;
+  }
+}
+
+@media (max-width: 280px) {
+  .spec-v2 .v2-brand .v2-badge,
+  .spec-v2 .v2-masthead p,
+  .spec-v2 .v2-connection > small,
+  .spec-v2 .v2-status > div {
+    display: none;
+  }
+
+  .spec-v2 .v2-transcript-tools {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .spec-v2 .v2-transcript-tools > button {
+    width: 100%;
+  }
+
+  .v2-tool-popover {
+    min-width: 0;
+    width: calc(100vw - 8px);
+    max-width: calc(100vw - 8px);
+  }
+}
