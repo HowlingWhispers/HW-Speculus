@@ -4,6 +4,11 @@ Speculus uses a human-readable release version plus a 7-character Git build id s
 
 ## Unreleased: isolated V2 foundation
 
+- Add review-only V3 state reconciliation for conservative canonical inventory suggestions derived from committed replies.
+- Add explicit Accept/Reject controls; generated prose still cannot directly mutate authoritative inventory.
+- Persist pending state proposals in raw saves and expose them in Diagnostics.
+- Tag accepted reconciliation actions to their source turn so reroll/delete can roll them back before replacing or removing that turn.
+
 - Add canonical operator-controlled V3 inventory using only Orbis-packaged item records and packaged actors.
 - Add V3 inventory controls for owner, quantity, equipped state and removal; generated prose remains unable to author inventory.
 - Persist canonical inventory through the world event ledger and raw save/import validation, and inject relevant inventory into renderer context as read-only engine state.
