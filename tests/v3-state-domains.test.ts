@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { emptyRuntimeDomains, runtimeDomainsSchema } from '../src/v3/runtime/state-domains';
-import { worldSchema } from '../src/v3/runtime/world';
+import { applyWorldAction, worldSchema } from '../src/v3/runtime/world';
+import { publicV2Package } from '../src/v3/contracts/launch';
+import { createV2Session } from '../src/v3/runtime/session';
+import { compileV2Context } from '../src/v3/runtime/context';
+import { v2Package } from './v2-fixtures';
 
 describe('V3 runtime state domains', () => {
   it('starts every mutable gameplay domain empty and explicit', () => {
@@ -46,6 +50,85 @@ describe('V3 runtime state domains', () => {
       events: [],
     };
     expect(runtimeDomainsSchema.safeParse({ relationships: [relationship, relationship] }).success).toBe(false);
+  });
+
+  it('adds only canonical packaged items and preserves equip/remove state through world revisions', () => {
+    const base = v2Package({
+      relatedAssets: [
+        { id: 'place:workshop', type: 'place', revision: 'rev-1', name: 'Workshop', summary: 'A quiet workshop.', data: {} },
+        { id: 'item:rope', type: 'item', revision: 'rev-1', name: 'Rope', summary: 'A coil of rope.', data: {} },
+      ],
+    });
+    const session = createV2Session(publicV2Package(base));
+    const playerId = session.launch.persona.id;
+
+    const added = applyWorldAction(session.world, {
+      type: 'inventory-add',
+      instanceId: 'inventory:rope:1',
+      canonicalItemId: 'item:rope',
+      ownerActorId: playerId,
+      quantity: 2,
+      equipped: false,
+    }, session.launch);
+
+    expect(added.revision).toBe(1);
+    expect(added.domains.inventory).toEqual([{
+      instanceId: 'inventory:rope:1',
+      canonicalItemId: 'item:rope',
+      ownerActorId: playerId,
+      containerId: null,
+      quantity: 2,
+      equipped: false,
+      condition: null,
+    }]);
+
+    const equipped = applyWorldAction(added, {
+      type: 'inventory-set-equipped',
+      instanceId: 'inventory:rope:1',
+      equipped: true,
+    }, session.launch);
+    expect(equipped.revision).toBe(2);
+    expect(equipped.domains.inventory[0].equipped).toBe(true);
+
+    const contextSession = { ...session, world: equipped };
+    const packet = compileV2Context(contextSession, '*I check my gear.*');
+    expect(packet.prompt).toContain('ENGINE INVENTORY STATE / READ ONLY');
+    expect(packet.prompt).toContain('"item":"Rope"');
+    expect(packet.prompt).toContain('"quantity":2');
+
+    const removed = applyWorldAction(equipped, {
+      type: 'inventory-remove',
+      instanceId: 'inventory:rope:1',
+    }, session.launch);
+    expect(removed.revision).toBe(3);
+    expect(removed.domains.inventory).toEqual([]);
+  });
+
+  it('rejects fabricated inventory item and owner identities', () => {
+    const base = v2Package({
+      relatedAssets: [
+        { id: 'item:rope', type: 'item', revision: 'rev-1', name: 'Rope', summary: 'A coil of rope.', data: {} },
+      ],
+    });
+    const session = createV2Session(publicV2Package(base));
+
+    expect(() => applyWorldAction(session.world, {
+      type: 'inventory-add',
+      instanceId: 'inventory:fake:1',
+      canonicalItemId: 'item:not-packaged',
+      ownerActorId: session.launch.persona.id,
+      quantity: 1,
+      equipped: false,
+    }, session.launch)).toThrow('canonical items supplied by Orbis');
+
+    expect(() => applyWorldAction(session.world, {
+      type: 'inventory-add',
+      instanceId: 'inventory:rope:1',
+      canonicalItemId: 'item:rope',
+      ownerActorId: 'actor:not-packaged',
+      quantity: 1,
+      equipped: false,
+    }, session.launch)).toThrow('packaged actor');
   });
 
   it('rejects self-relationships', () => {
