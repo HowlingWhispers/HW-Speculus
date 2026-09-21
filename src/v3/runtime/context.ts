@@ -286,7 +286,7 @@ export function compileV2Context(
   const blocks: V3ContextBlock[] = [
     {
       id: 'contract',
-      title: impersonatingPersona ? 'PERSONA IMPERSONATION CONTRACT' : 'PLAYER-PERSPECTIVE RENDERING CONTRACT',
+      title: 'SPECULUS V3 EXPERIMENTAL / RENDERING CONTRACT',
       content: instructions,
       priority: 100,
       required: true,
