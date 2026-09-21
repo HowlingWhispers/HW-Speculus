@@ -231,3 +231,75 @@ body:has(.spec-v2) { margin: 0; background: #101715; }
     grid-column: 1 / -1;
   }
 }
+
+
+.spec-v2 .v2-state-review {
+  display: grid;
+  gap: 8px;
+  margin: 8px 10px 0;
+  padding: 10px;
+  border: 1px solid var(--v2-line);
+  background: rgba(0, 0, 0, .16);
+}
+
+.spec-v2 .v2-state-review > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.spec-v2 .v2-state-review h3 {
+  margin: 1px 0 0;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.spec-v2 .v2-state-review > header > strong {
+  min-width: 24px;
+  text-align: center;
+  border: 1px solid var(--v2-line);
+  padding: 3px 6px;
+}
+
+.spec-v2 .v2-state-review-list {
+  display: grid;
+  gap: 6px;
+}
+
+.spec-v2 .v2-state-review-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--v2-line);
+  background: rgba(0, 0, 0, .1);
+}
+
+.spec-v2 .v2-state-review-list p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.spec-v2 .v2-state-review-list article > small {
+  grid-column: 1;
+}
+
+.spec-v2 .v2-state-review-list article > div {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  gap: 5px;
+}
+
+@media (max-width: 620px) {
+  .spec-v2 .v2-state-review-list article {
+    grid-template-columns: 1fr;
+  }
+  .spec-v2 .v2-state-review-list article > div {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
