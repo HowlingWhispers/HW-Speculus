@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { emptyRuntimeDomains, runtimeDomainsSchema } from '../src/v3/runtime/state-domains';
 import { applyWorldAction, worldSchema } from '../src/v3/runtime/world';
 import { publicV2Package } from '../src/v3/contracts/launch';
-import { createV2Session } from '../src/v3/runtime/session';
+import { createV2Session, operateWorld } from '../src/v3/runtime/session';
+import { exportV2Session, importV2Session } from '../src/v3/storage/session';
 import { compileV2Context } from '../src/v3/runtime/context';
 import { v2Package } from './v2-fixtures';
 
@@ -62,16 +63,18 @@ describe('V3 runtime state domains', () => {
     const session = createV2Session(publicV2Package(base));
     const playerId = session.launch.persona.id;
 
-    const added = applyWorldAction(session.world, {
+    const withItem = operateWorld(session, {
       type: 'inventory-add',
       instanceId: 'inventory:rope:1',
       canonicalItemId: 'item:rope',
       ownerActorId: playerId,
       quantity: 2,
       equipped: false,
-    }, session.launch);
+    });
+    const added = withItem.world;
 
     expect(added.revision).toBe(1);
+    expect(withItem.events.at(-1)?.label).toBe('inventory-add');
     expect(added.domains.inventory).toEqual([{
       instanceId: 'inventory:rope:1',
       canonicalItemId: 'item:rope',
@@ -82,26 +85,31 @@ describe('V3 runtime state domains', () => {
       condition: null,
     }]);
 
-    const equipped = applyWorldAction(added, {
+    const equippedSession = operateWorld(withItem, {
       type: 'inventory-set-equipped',
       instanceId: 'inventory:rope:1',
       equipped: true,
-    }, session.launch);
+    });
+    const equipped = equippedSession.world;
     expect(equipped.revision).toBe(2);
     expect(equipped.domains.inventory[0].equipped).toBe(true);
 
-    const contextSession = { ...session, world: equipped };
-    const packet = compileV2Context(contextSession, '*I check my gear.*');
+    const packet = compileV2Context(equippedSession, '*I check my gear.*');
     expect(packet.prompt).toContain('ENGINE INVENTORY STATE / READ ONLY');
     expect(packet.prompt).toContain('"item":"Rope"');
     expect(packet.prompt).toContain('"quantity":2');
 
-    const removed = applyWorldAction(equipped, {
+    const raw = exportV2Session(equippedSession, 1_800_000_200_000);
+    const restored = importV2Session(raw, createV2Session(publicV2Package(base)));
+    expect(restored.world.domains.inventory[0].equipped).toBe(true);
+    expect(restored.world.domains.inventory[0].quantity).toBe(2);
+
+    const removedSession = operateWorld(restored, {
       type: 'inventory-remove',
       instanceId: 'inventory:rope:1',
-    }, session.launch);
-    expect(removed.revision).toBe(3);
-    expect(removed.domains.inventory).toEqual([]);
+    });
+    expect(removedSession.world.revision).toBe(3);
+    expect(removedSession.world.domains.inventory).toEqual([]);
   });
 
   it('rejects fabricated inventory item and owner identities', () => {
