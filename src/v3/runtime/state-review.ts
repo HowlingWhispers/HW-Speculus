@@ -84,18 +84,18 @@ export function acceptStateProposal(session: V2Session, proposalId: string): V2S
       ownerActorId: proposal.ownerActorId,
       quantity: proposal.quantity,
       equipped: false,
-    });
+    }, Date.now(), proposal.sourceTurnId);
   } else if (proposal.kind === 'inventory-remove') {
     next = operateWorld(session, {
       type: 'inventory-remove',
       instanceId: proposal.instanceId,
-    });
+    }, Date.now(), proposal.sourceTurnId);
   } else {
     next = operateWorld(session, {
       type: 'inventory-set-equipped',
       instanceId: proposal.instanceId,
       equipped: proposal.equipped,
-    });
+    }, Date.now(), proposal.sourceTurnId);
   }
 
   return {
