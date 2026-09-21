@@ -4,6 +4,12 @@ Speculus uses a human-readable release version plus a 7-character Git build id s
 
 ## Unreleased: isolated V2 foundation
 
+- Add priority-budgeted V3 context blocks so engine authority, current canon and player input stay protected while optional history/state is admitted by importance.
+- Add tiered long-session memory: 4 full recent exchanges, 12 compact chronicle turns and up to 48 lower-priority archive turns derived from the committed ledger.
+- Add V3 Memory and Domains diagnostics so context tiers and runtime state can be inspected directly.
+- Reuse the existing Speculus relationship ledger in V3, including valid Orbis starting state, explicit bounded relationship cues, raw-save persistence, reroll replacement and delete rollback.
+- Keep unrevealed mystery state out of player-visible V3 context; only player-known/revealed mystery state may be injected.
+
 - Send committed V3 turns to Studium with explicit V3 research identity instead of leaving World Brain experiments invisible to research.
 - Retract a turn's Studium research bundle when the latest committed turn is deleted; rerolls continue replacing the same stable research identity.
 - Make V2 and V3 terminal-first by default with Setup and Diagnostics closed until requested.
