@@ -3,6 +3,7 @@ import { parseV2ClientPackage, type V2ClientPackage } from '../contracts/launch'
 import { V2BrowserProvider } from '../providers/browser';
 import { generateV2Turn, V2DraftRejected, type EnginePhase } from '../runtime/engine';
 import { generateV2PersonaDraft } from '../runtime/persona-draft';
+import { submitLatestTurnToStudium } from '../research/studium';
 import { createV2Session, deleteLastTurn, operateWorld, type V2Diagnostics, type V2Session } from '../runtime/session';
 import { loadLatestV2LocalAutosave, saveV2LocalAutosave } from '../storage/autosave';
 import { exportV2Session, importV2Session, inspectV2Session, loadV2Session, MAX_V2_FILE_BYTES, saveV2Session, v2ExportFilename } from '../storage/session';
@@ -161,7 +162,10 @@ export function V2App() {
       const next = await generateV2Turn(session, new V2BrowserProvider(session.launch.launchId), {
         reroll, skipPersona, signal: active.signal, onPhase: notePhase,
       });
-      if (!active.signal.aborted) setSession(next);
+      if (!active.signal.aborted) {
+        setSession(next);
+        void submitLatestTurnToStudium(next, { reroll }).catch(() => undefined);
+      }
     } catch (cause) {
       setError(active.signal.aborted ? 'Cancelled. Your draft and committed state are unchanged.' : messageOf(cause));
       if (cause instanceof V2DraftRejected) setRejected(cause.diagnostics);
