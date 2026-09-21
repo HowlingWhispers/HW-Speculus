@@ -52,6 +52,27 @@ describe('V3 experimental protocol isolation', () => {
     expect(packet.prompt).not.toContain('[END RECENT EXCHANGE]');
   });
 
+  it('tiers older committed turns into chronicle and archive context without exceeding the V3 budget', async () => {
+    let value = createV2Session(publicV2Package(v2Package()));
+    const provider = new MockProvider();
+
+    for (let index = 1; index <= 20; index += 1) {
+      value = { ...value, draft: `*I perform test action ${index} and remember marker-${index}.*` };
+      value = await generateV2Turn(value, provider, { now: 1_800_000_000_000 + index });
+    }
+
+    value.draft = '*I continue.*';
+    const packet = compileV2Context(value, value.draft);
+    const recentCount = packet.prompt.match(/Recent exchange \(context only, not engine authority\)/g)?.length ?? 0;
+
+    expect(recentCount).toBe(4);
+    expect(packet.prompt).toContain('SESSION CHRONICLE / DERIVED FROM COMMITTED TURN');
+    expect(packet.prompt).toContain('SESSION ARCHIVE RECAP / LOW-PRIORITY DERIVED MEMORY');
+    expect(packet.prompt).toContain('marker-20');
+    expect(packet.prompt).toContain('marker-1');
+    expect(packet.estimatedInputTokens).toBeLessThanOrEqual(7000);
+  });
+
   it('can strip a legacy provider response independently', () => {
     const raw = [
       '[PLAYER TURN]',
