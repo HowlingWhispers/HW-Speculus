@@ -177,3 +177,57 @@ body:has(.spec-v2) { margin: 0; background: #101715; }
 @media (max-width: 560px) {
   .spec-v2 .v2-tool-menu > div { position: fixed; left: 12px; right: 12px; bottom: 64px; min-width: 0; }
 }
+
+
+.spec-v2 .v2-inventory-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--v2-line);
+}
+
+.spec-v2 .v2-inventory-editor h3 {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.spec-v2 .v2-inventory-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.spec-v2 .v2-inventory-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 7px;
+  border: 1px solid var(--v2-line);
+  background: rgba(0, 0, 0, .12);
+}
+
+.spec-v2 .v2-inventory-row span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.spec-v2 .v2-inventory-row strong,
+.spec-v2 .v2-inventory-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .spec-v2 .v2-inventory-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .spec-v2 .v2-inventory-row span {
+    grid-column: 1 / -1;
+  }
+}
