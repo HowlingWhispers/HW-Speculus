@@ -28,3 +28,28 @@ V3 is not throwaway work. Its state kernel, World Brain contract, continuity sys
 Keep reusable systems modular and product-name-neutral where practical so the later Fabula design can adopt, adapt or replace them deliberately.
 
 See `v3-fabula-roadmap.md` for the current Speculus development path and the systems intended to inform Fabula.
+
+
+## Continuity and memory
+
+V3 now budgets context through explicit priority blocks instead of appending optional context until the prompt is full.
+
+Committed turn history is exposed in three deterministic tiers:
+
+- the latest 4 turns remain full recent exchanges
+- the preceding 12 turns become compact chronicle entries
+- up to 48 older turns become a lower-priority archive recap
+
+These memory tiers are derived from the committed turn ledger rather than stored as a second authoritative state. Reroll and delete therefore change derived memory automatically. Current engine state and current Orbis canon always outrank chronicle/archive text.
+
+## Relationship continuity
+
+V3 reuses Speculus's existing relationship ledger for character-primary simulations. Orbis launch relationship state is accepted when valid, explicit relationship-changing player cues can update bounded relationship dimensions, and the current relationship is included as behavior context rather than player-visible knowledge.
+
+Relationship events use stable V3 turn IDs. Rerolls replace the same turn's relationship event and deleting the latest turn removes its relationship event. Neutral turns do not create zero-change events.
+
+The future V3 world-domain relationship model remains separate from this session relationship ledger so experiments can evolve without pretending the two models are already the same system.
+
+## Hidden-state boundary
+
+V3 runtime mystery state is not automatically exposed to the renderer. Only player-known/revealed mystery state may enter player-visible context, and injected mystery state is explicitly forbidden from expanding beyond revealed facts.
