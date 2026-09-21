@@ -44,7 +44,7 @@ describe('V3 experimental protocol isolation', () => {
     next.draft = '*I wait.*';
     const packet = compileV2Context(next, next.draft);
 
-    expect(packet.prompt).toContain('SPECULUS V3 EXPERIMENTAL');
+    expect(packet.prompt.startsWith('SPECULUS V3 EXPERIMENTAL /')).toBe(true);
     expect(packet.prompt).toContain('[IN-WORLD RESPONSE]');
     expect(packet.prompt).toContain('Recent exchange (context only, not engine authority)');
     expect(packet.prompt).not.toContain('[PLAYER TURN]');
