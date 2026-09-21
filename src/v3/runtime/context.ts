@@ -114,10 +114,10 @@ export function compileV2Context(
 
   const influence = section('STYLE INFLUENCE / NOT STATE AUTHORITY', { tags: settings.tags, freeform: settings.freeform });
   const input = impersonatingPersona
-    ? section('OPERATOR REQUEST', `Draft only ${launch.persona.name}'s next player turn. Do not write the character or narrator.`) + '\nContinue with in-world prose only.\n'
+    ? section('OPERATOR REQUEST', `Draft only ${launch.persona.name}'s next player turn. Do not write the character or narrator.`) + '\n[IN-WORLD RESPONSE]\n'
     : skippingPersona
-      ? section('OPERATOR TURN CONTROL', 'Player persona turn skipped. No player action, dialogue, thought or decision occurred in this turn.') + '\nContinue with in-world prose only.\n'
-      : section('PLAYER INPUT / ATTEMPT OR UTTERANCE / NOT STATE AUTHORITY', player) + '\nContinue with in-world prose only.\n';
+      ? section('OPERATOR TURN CONTROL', 'Player persona turn skipped. No player action, dialogue, thought or decision occurred in this turn.') + '\n[IN-WORLD RESPONSE]\n'
+      : section('PLAYER INPUT / ATTEMPT OR UTTERANCE / NOT STATE AUTHORITY', player) + '\n[IN-WORLD RESPONSE]\n';
   if ((prompt + influence + input).length > CONTEXT_CHARACTER_BUDGET) {
     throw new Error('Essential scene/state and input exceed the V3 context allowance. Nothing was cut or sent. Shorten the setup/input before retrying.');
   }
