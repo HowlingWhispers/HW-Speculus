@@ -1,3 +1,4 @@
+import { getRelationship } from '../../runtime/relationships/core';
 import type { V2Session, V2Turn } from './session';
 import type { V2TurnResolution } from './resolution';
 import { selectV3ContextBlocks, type V3ContextBlock } from './context-blocks';
@@ -382,6 +383,25 @@ export function compileV2Context(
       }),
       priority: 100,
       required: true,
+    });
+  }
+
+  if (!impersonatingPersona && launch.character && launch.primaryAsset.type === 'character') {
+    const relationship = getRelationship(session.relationships, launch.character.id, launch.persona.id);
+    blocks.push({
+      id: 'relationship:active-subject',
+      title: 'ORBIS / SESSION RELATIONSHIP STATE / BEHAVIOR ONLY / NOT PLAYER KNOWLEDGE',
+      content: asText({
+        label: relationship.label,
+        score: relationship.score,
+        dimensions: relationship.dimensions,
+        recentEvents: relationship.events.slice(-8).map((event) => ({
+          delta: event.delta,
+          reason: event.reason,
+          dimensionDeltas: event.dimensionDeltas,
+        })),
+      }),
+      priority: 79,
     });
   }
 
