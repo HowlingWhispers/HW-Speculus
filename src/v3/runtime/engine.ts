@@ -5,6 +5,7 @@ import { compileV2Context } from './context';
 import { resolveV2PlayerTurn } from './resolution';
 import { settingsSchema, type V2Diagnostics, type V2Session, type V2Turn } from './session';
 import { SKIPPED_PERSONA_TURN } from './turn-control';
+import { deriveStateProposals } from './state-review';
 
 export type EnginePhase = 'resolve' | 'context' | 'generate' | 'validate' | 'commit';
 export class V2DraftRejected extends Error {
@@ -206,10 +207,17 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
       worldRevision: resolvedSession.world.revision, at, world: resolvedSession.world,
     }
     : null;
+  const proposalBase = session.stateProposals.filter((proposal) => proposal.sourceTurnId !== id);
+  const stateProposals = [
+    ...proposalBase,
+    ...deriveStateProposals({ ...resolvedSession, relationships, stateProposals: proposalBase }, id, normalizedReply),
+  ];
+
   return {
     ...resolvedSession, draft: options.reroll || skipPersona ? session.draft : '', turns: [...resolvedSession.turns, turn],
     nextTurn: session.nextTurn + (options.reroll ? 0 : 1),
     relationships,
+    stateProposals,
     events: options.reroll
       ? session.events.map((event) => event.id === id ? { ...event, label: skipPersona ? 'Reply rerolled / persona skipped' : 'Reply rerolled', at } : event)
       : [...resolvedSession.events, ...(resolutionEvent ? [resolutionEvent] : []), { id, kind: 'turn', label: skipPersona ? 'Reply committed / persona skipped' : 'Reply committed', worldRevision: resolvedSession.world.revision, at }],
