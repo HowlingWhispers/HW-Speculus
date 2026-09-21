@@ -25,3 +25,24 @@ export async function submitLatestTurnToStudium(session: V2Session, options: { r
     throw new Error(`Studium research handoff failed with HTTP ${response.status}.`);
   }
 }
+
+
+export async function retractLatestTurnFromStudium(session: V2Session): Promise<void> {
+  const turn = session.turns.at(-1);
+  if (!turn) return;
+
+  const response = await fetch('/api/v2/research/retract', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      launchId: session.launch.launchId,
+      sessionId: session.id,
+      turnId: turn.id,
+    }),
+  });
+
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`Studium research retraction failed with HTTP ${response.status}.`);
+  }
+}
