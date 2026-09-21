@@ -75,6 +75,64 @@ describe('separate V1/V2 bridge authorization', () => {
     expect(observed).toHaveLength(2);
   });
 
+  it('forwards sanitized committed V2 turns to Studium using the packaged world identity', async () => {
+    env();
+
+    const observed: Array<{ headers: Record<string, string | string[] | undefined>; body: Record<string, unknown> }> = [];
+    const studium = express();
+    studium.use(express.json());
+    studium.post('/api/v1/bundles', (req, res) => {
+      observed.push({ headers: req.headers, body: req.body });
+      res.status(201).json({ ok: true, inserted: true });
+    });
+    vi.stubEnv('STUDIUM_API_URL', await listen(studium));
+    vi.stubEnv('STUDIUM_BRIDGE_SECRET', 'test-studium-bridge-secret');
+
+    const base = await listen(createApp());
+    const launchId = 'studium-v2-launch';
+    const packageValue = v2Package({
+      launchId,
+      relatedAssets: [
+        { id: 'world:test-world', type: 'world', revision: 'world-rev-1', name: 'Test World', summary: 'Fixture world.', data: {} },
+        { id: 'place:workshop', type: 'place', revision: 'rev-1', name: 'Workshop', summary: 'A quiet workshop.', data: {} },
+      ],
+    });
+    const deposited = await post(base, '/api/v2/launch', packageValue, auth);
+    expect(deposited.status).toBe(201);
+    const launchUrl = (await deposited.json() as { launchUrl: string }).launchUrl;
+    const code = new URL(launchUrl).searchParams.get('launch');
+    const claimed = await fetch(`${base}/api/v2/launch/${code}`);
+    const cookie = claimed.headers.get('set-cookie')!.split(';')[0];
+
+    const research = await post(base, '/api/v2/research', {
+      launchId,
+      sessionId: 'session-fixture',
+      turnId: 'turn:1',
+      occurredAt: Date.now(),
+      player: '*I walk into the workshop.*',
+      reply: '*The workshop door opens with a dry wooden creak.*',
+      worldRevision: 1,
+      locationId: 'place:workshop',
+      reroll: false,
+    }, { Cookie: cookie });
+
+    expect(research.status).toBe(202);
+    expect(observed).toHaveLength(1);
+    expect(observed[0].headers.authorization).toBe('Bearer test-studium-bridge-secret');
+    expect(observed[0].body).toMatchObject({
+      schemaVersion: 'studium.bundle.v1',
+      worldId: 'world:test-world',
+      source: 'speculus',
+      sanitized: true,
+    });
+    const raw = JSON.stringify(observed[0].body);
+    expect(raw).toContain('I walk into the workshop.');
+    expect(raw).toContain('The workshop door opens');
+    expect(raw).not.toContain('generationGrant');
+    expect(raw).not.toContain('prompt');
+    expect(raw).not.toContain('test-only-opaque-generation-grant');
+  });
+
   it.each([1, 2] as const)('shows the underlying Orbis/NovelAI error in V%s without echoing upstream data', async (version) => {
     env(); const gateway = express(); gateway.use(express.json());
     const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
