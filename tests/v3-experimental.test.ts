@@ -73,6 +73,33 @@ describe('V3 experimental protocol isolation', () => {
     expect(packet.estimatedInputTokens).toBeLessThanOrEqual(7000);
   });
 
+  it('keeps unrevealed mystery state out of player-visible context', () => {
+    const value = createV2Session(publicV2Package(v2Package()));
+    value.world.domains.mysteries = [
+      {
+        id: 'mystery-state-hidden',
+        mysteryId: 'secret:hidden-truth',
+        stageIndex: 0,
+        knownByActorIds: [],
+        revealedFactIds: [],
+      },
+      {
+        id: 'mystery-state-known',
+        mysteryId: 'secret:known-thread',
+        stageIndex: 2,
+        knownByActorIds: [value.launch.persona.id],
+        revealedFactIds: ['fact:known-clue'],
+      },
+    ];
+
+    const packet = compileV2Context(value, '*I inspect the room.*');
+
+    expect(packet.prompt).not.toContain('secret:hidden-truth');
+    expect(packet.prompt).toContain('secret:known-thread');
+    expect(packet.prompt).toContain('fact:known-clue');
+    expect(packet.prompt).toContain('NEVER EXPAND BEYOND REVEALED FACTS');
+  });
+
   it('can strip a legacy provider response independently', () => {
     const raw = [
       '[PLAYER TURN]',
