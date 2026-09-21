@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { V2ClientPackage } from '../contracts/launch';
-import { RELATIONSHIP_DIMENSIONS, type RelationshipState } from '../../runtime/relationships/schema';
+import type { RelationshipState } from '../../runtime/relationships/schema';
 import { removeRelationshipTurns } from '../../runtime/relationships/core';
 import { applyWorldAction, createWorld, worldSchema, type WorldAction } from './world';
 
@@ -43,9 +43,20 @@ export const diagnosticsSchema = z.object({
   generationSettings: generationSettingsSchema.optional(),
 });
 export type V2Diagnostics = z.infer<typeof diagnosticsSchema>;
-const relationshipDimensionsSchema = z.object(Object.fromEntries(
-  RELATIONSHIP_DIMENSIONS.map((dimension) => [dimension, z.number().finite().default(0)]),
-) as Record<(typeof RELATIONSHIP_DIMENSIONS)[number], z.ZodDefault<z.ZodNumber>>);
+const relationshipDimensionsSchema = z.object({
+  trust: z.number().finite().default(0),
+  affection: z.number().finite().default(0),
+  respect: z.number().finite().default(0),
+  fear: z.number().finite().default(0),
+  comfort: z.number().finite().default(0),
+  suspicion: z.number().finite().default(0),
+  attachment: z.number().finite().default(0),
+  protectiveness: z.number().finite().default(0),
+  resentment: z.number().finite().default(0),
+  loyalty: z.number().finite().default(0),
+  familiarity: z.number().finite().default(0),
+  authority: z.number().finite().default(0),
+});
 
 const relationshipEventStateSchema = z.object({
   id: z.string().min(1),
@@ -71,6 +82,11 @@ const relationshipRecordStateSchema = z.object({
 
 export const relationshipStateSchema = z.record(z.string(), relationshipRecordStateSchema).default({});
 
+export function normalizeRelationshipState(value: unknown): RelationshipState {
+  const parsed = relationshipStateSchema.safeParse(value);
+  return parsed.success ? parsed.data : {};
+}
+
 export const turnSchema = z.object({
   id: z.string().min(1), player: z.string().min(1).max(16000), reply: z.string().min(1).max(64000),
   createdAt: z.number(), worldRevision: z.number().int(), diagnostics: diagnosticsSchema,
@@ -91,7 +107,7 @@ export function createV2Session(launch: V2ClientPackage): V2Session {
   return {
     version: 2, engine: 'v2', id: crypto.randomUUID(), launch,
     world: createWorld(launch), settings: settingsSchema.parse({}), draft: '', turns: [], events: [], nextTurn: 1,
-    relationships: relationshipStateSchema.parse(launch.relationshipState),
+    relationships: normalizeRelationshipState(launch.relationshipState),
   };
 }
 
