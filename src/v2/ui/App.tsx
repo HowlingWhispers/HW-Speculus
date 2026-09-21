@@ -3,7 +3,7 @@ import { parseV2ClientPackage, type V2ClientPackage } from '../contracts/launch'
 import { V2BrowserProvider } from '../providers/browser';
 import { generateV2Turn, V2DraftRejected, type EnginePhase } from '../runtime/engine';
 import { generateV2PersonaDraft } from '../runtime/persona-draft';
-import { submitLatestTurnToStudium } from '../research/studium';
+import { retractLatestTurnFromStudium, submitLatestTurnToStudium } from '../research/studium';
 import { createV2Session, deleteLastTurn, operateWorld, type V2Diagnostics, type V2Session } from '../runtime/session';
 import { loadLatestV2LocalAutosave, saveV2LocalAutosave } from '../storage/autosave';
 import { exportV2Session, importV2Session, inspectV2Session, loadV2Session, MAX_V2_FILE_BYTES, saveV2Session, v2ExportFilename } from '../storage/session';
@@ -42,8 +42,8 @@ export function V2App() {
   const importLock = useRef(false);
   const [importRevision, setImportRevision] = useState(0);
   const [rejected, setRejected] = useState<V2Diagnostics | null>(null);
-  const [showSettings, setShowSettings] = useState(true);
-  const [showDiagnostics, setShowDiagnostics] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [transcriptDetached, setTranscriptDetached] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -298,24 +298,42 @@ export function V2App() {
         {!transcriptDetached && <V2Transcript session={session} busy={busy} />}
         <div className="v2-transcript-tools">
           <button disabled={busy || !session.turns.length || expired || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => void generate(true)}>Reroll latest</button>
-          <button disabled={busy || expired} onClick={() => void generate(false, true)}>Skip persona turn</button>
           <button disabled={busy || expired} onClick={() => void impersonate()}>Impersonate</button>
-          <button type="button" onClick={openDetachedTranscript}>{transcriptDetached ? 'Focus reader' : 'Detach reader'}</button>
-          <button disabled={busy || expired} onClick={startNewSimulation}>New simulation</button>
-          <button disabled={busy} onClick={saveNow}>Save now</button>
-          <button disabled={busy} onClick={download}>Export raw</button><button disabled={busy} onClick={() => fileInput.current?.click()}>Import raw</button>
-          <button className="v2-delete" disabled={busy || !session.turns.length || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => {
-            if (window.confirm('Remove the latest player/reply pair and its resolved state from this V2 session?')) { setSession(deleteLastTurn(session)); setRejected(null); }
-          }}>Delete latest</button>
+          <details className="v2-tool-menu">
+            <summary>Turn</summary>
+            <div>
+              <button disabled={busy || expired} onClick={() => void generate(false, true)}>Skip persona turn</button>
+              <button className="v2-delete" disabled={busy || !session.turns.length || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => {
+                if (window.confirm('Remove the latest player/reply pair and its resolved state from this V2 session?')) {
+                  void retractLatestTurnFromStudium(session).catch(() => undefined);
+                  setSession(deleteLastTurn(session));
+                  setRejected(null);
+                }
+              }}>Delete latest</button>
+            </div>
+          </details>
+          <details className="v2-tool-menu">
+            <summary>Session</summary>
+            <div>
+              <button type="button" onClick={openDetachedTranscript}>{transcriptDetached ? 'Focus reader' : 'Detach reader'}</button>
+              <button disabled={busy || expired} onClick={startNewSimulation}>New simulation</button>
+              <button disabled={busy} onClick={saveNow}>Save now</button>
+              <button disabled={busy} onClick={download}>Export raw</button>
+              <button disabled={busy} onClick={() => fileInput.current?.click()}>Import raw</button>
+            </div>
+          </details>
           <input hidden ref={fileInput} type="file" accept=".json,application/json" aria-label="Import V2 session" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); }} />
         </div>
         {transcriptDetached && <div className="v2-detached-note"><span>Reading display detached</span><small>Move the reader window to any monitor. Closing it restores the transcript here.</small></div>}
         {(error || storageError || expired) && <div className="v2-fault" role="alert">{storageError || error || 'Authorization expired. Export this session, launch the same record from Orbis, then import the V2 export.'}</div>}
         <form className="v2-composer" onSubmit={(event) => { event.preventDefault(); void generate(); }}>
           <textarea aria-label="Your next turn" placeholder="What do you do next?" value={session.draft} maxLength={16000} disabled={busy} onChange={(event) => setSession({ ...session, draft: event.target.value })} onKeyDown={(event) => {
-            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void generate(); }
+            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              if (!busy && session.draft.trim() && !expired) void generate();
+            }
           }} />
-          <div><small>Ctrl / Cmd + Enter to send{transcriptDetached ? ' / detached reader live' : ''}</small>{busy ? <button type="button" onClick={() => controller.current?.abort()}>Cancel</button> : <button className="v2-send" disabled={!session.draft.trim() || expired}>Send</button>}</div>
+          <div><small>Enter to send · Shift+Enter for newline{transcriptDetached ? ' / detached reader live' : ''}</small>{busy ? <button type="button" onClick={() => controller.current?.abort()}>Cancel</button> : <button className="v2-send" disabled={!session.draft.trim() || expired}>Send</button>}</div>
         </form>
       </section>
       {showDiagnostics && <V2DiagnosticsPanel session={session} rejected={rejected} />}
