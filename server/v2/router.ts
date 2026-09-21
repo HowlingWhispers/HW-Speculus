@@ -145,10 +145,6 @@ export function createV2Router(options: { production?: boolean } = {}) {
         return response.status(202).json({ ok: true, forwarded: false, reason: 'world_not_packaged' });
       }
 
-      const revisionHash = createHash('sha256')
-        .update(JSON.stringify([body.turnId, body.worldRevision, body.player, body.reply]))
-        .digest('hex')
-        .slice(0, 16);
       const recordId = `speculus:v2:${body.sessionId}:${body.turnId}`;
       const observedAt = new Date(body.occurredAt).toISOString();
       const player = clip(body.player, 1800);
@@ -162,7 +158,7 @@ export function createV2Router(options: { production?: boolean } = {}) {
 
       const bundle = {
         schemaVersion: 'studium.bundle.v1',
-        bundleId: `speculus:${body.sessionId}:${body.turnId}:${revisionHash}`,
+        bundleId: `speculus:${body.sessionId}:${body.turnId}`,
         worldId: session.worldId,
         source: 'speculus',
         capturedAt: new Date().toISOString(),
