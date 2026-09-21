@@ -57,6 +57,7 @@ export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; 
   const rawView = useMemo(() => ({
     runtime: 'v3-experimental', compatibilitySchema: { version: session.version, engine: session.engine }, source: session.launch.primaryAsset,
     world: session.world, settings: session.settings, turns: session.turns, events: session.events, nextTurn: session.nextTurn,
+    sessionRelationships: session.relationships,
   }), [session]);
   const contextView = diagnostic ? {
     estimatedInputTokens: diagnostic.estimatedInputTokens,
@@ -80,6 +81,7 @@ export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; 
     policy: 'Committed-turn derived memory only. Reroll/delete automatically changes the derived memory because there is no independent memory write.',
   };
   const domainsView = {
+    sessionRelationships: session.relationships,
     inventory: session.world.domains.inventory,
     relationships: session.world.domains.relationships,
     resources: session.world.domains.resources,
@@ -113,7 +115,7 @@ export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; 
         <section className="v2-instrument"><h3>Validation</h3><p className={rejected && !selectedTurnId ? 'v2-error-text' : ''}>{rejected && !selectedTurnId ? 'Draft rejected / no commit' : diagnostic ? 'Structural checks passed' : 'Awaiting generation'}</p>{diagnostic?.issues.map((issue) => <p key={issue}>{issue}</p>)}<small>Physical state is protected from prose writes. This is not full semantic canon validation.</small></section>
       </>}
       {tab === 'memory' && <section className="v2-instrument"><h3>Derived session memory</h3><dl><dt>Full recent turns</dt><dd>{memoryView.recentFullTurns}</dd><dt>Chronicle turns</dt><dd>{memoryView.chronicleTurns}</dd><dt>Archive turns</dt><dd>{memoryView.archiveTurns}</dd><dt>Outside archive window</dt><dd>{memoryView.beyondArchiveWindow}</dd></dl><p className="v2-note">{memoryView.policy}</p><small>Chronicle and archive text are context aids only. Current engine state and Orbis canon outrank them.</small></section>}
-      {tab === 'domains' && <><section className="v2-instrument"><h3>Runtime domains</h3><dl><dt>Inventory</dt><dd>{domainsView.inventory.length}</dd><dt>Relationships</dt><dd>{domainsView.relationships.length}</dd><dt>Resources</dt><dd>{domainsView.resources.length}</dd><dt>Conditions</dt><dd>{domainsView.conditions.length}</dd><dt>Mysteries</dt><dd>{domainsView.mysteries.length}</dd><dt>Chronicle domain</dt><dd>{domainsView.chronicleDomain.length}</dd></dl></section><details className="v2-instrument"><summary>Domain state</summary><pre>{JSON.stringify(domainsView, null, 2)}</pre></details></>}
+      {tab === 'domains' && <><section className="v2-instrument"><h3>Runtime domains</h3><dl><dt>Session relationship ledgers</dt><dd>{Object.keys(domainsView.sessionRelationships).length}</dd><dt>Inventory</dt><dd>{domainsView.inventory.length}</dd><dt>World-domain relationships</dt><dd>{domainsView.relationships.length}</dd><dt>Resources</dt><dd>{domainsView.resources.length}</dd><dt>Conditions</dt><dd>{domainsView.conditions.length}</dd><dt>Mysteries</dt><dd>{domainsView.mysteries.length}</dd><dt>Chronicle domain</dt><dd>{domainsView.chronicleDomain.length}</dd></dl></section><details className="v2-instrument"><summary>Domain state</summary><pre>{JSON.stringify(domainsView, null, 2)}</pre></details></>}
 
       {tab === 'context' && <>
         {diagnostic ? <section className="v2-instrument"><h3>Generation packet</h3><dl><dt>Input tokens</dt><dd>~{diagnostic.estimatedInputTokens.toLocaleString()}</dd><dt>Output allowance</dt><dd>{diagnostic.outputBudget} tokens</dd><dt>Model</dt><dd>{diagnostic.model}</dd><dt>Completion</dt><dd>{diagnostic.completionStatus}</dd><dt>Duration</dt><dd>{(diagnostic.durationMs / 1000).toFixed(1)}s</dd></dl></section> : <p className="v2-note">The first generation will record its exact prompt and settings here.</p>}
