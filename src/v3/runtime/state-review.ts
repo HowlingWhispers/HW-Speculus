@@ -2,11 +2,12 @@ import { operateWorld, type V2Session } from './session';
 import { assetsFor } from './world';
 import type { V3StateProposal } from './state-proposals';
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function mentioned(pattern: string, itemName: string, text: string) {
-  return new RegExp(\`\\b(?:\${pattern})\\b[^\\n.!?]{0,80}\\b\${escapeRegExp(itemName)}\\b\`, 'i').test(text)
-    || new RegExp(\`\\b\${escapeRegExp(itemName)}\\b[^\\n.!?]{0,80}\\b(?:\${pattern})\\b\`, 'i').test(text);
+  const escapedName = escapeRegExp(itemName);
+  return new RegExp('\\b(?:' + pattern + ')\\b[^\\n.!?]{0,80}\\b' + escapedName + '\\b', 'i').test(text)
+    || new RegExp('\\b' + escapedName + '\\b[^\\n.!?]{0,80}\\b(?:' + pattern + ')\\b', 'i').test(text);
 }
 
 export function deriveStateProposals(session: V2Session, sourceTurnId: string, reply: string): V3StateProposal[] {
@@ -21,10 +22,10 @@ export function deriveStateProposals(session: V2Session, sourceTurnId: string, r
 
     if (owned.length === 0 && mentioned('you (?:now )?(?:take|pick up|picked up|grab|receive|received|accept|accepted|obtain|obtained|acquire|acquired|are given)', itemName, reply)) {
       proposals.push({
-        id: \`proposal:\${sourceTurnId}:inventory-add:\${asset.id}\`,
+        id: 'proposal:' + sourceTurnId + ':inventory-add:' + asset.id,
         sourceTurnId,
         kind: 'inventory-add',
-        summary: \`Review: the committed reply appears to show \${session.launch.persona.name} receiving canonical item \${asset.name}.\`,
+        summary: 'Review: the committed reply appears to show ' + session.launch.persona.name + ' receiving canonical item ' + asset.name + '.',
         canonicalItemId: asset.id,
         ownerActorId: playerId,
         quantity: 1,
@@ -37,10 +38,10 @@ export function deriveStateProposals(session: V2Session, sourceTurnId: string, r
 
     if (mentioned('you (?:drop|dropped|discard|discarded|give away|gave away|hand over|handed over|lose|lost)', itemName, reply)) {
       proposals.push({
-        id: \`proposal:\${sourceTurnId}:inventory-remove:\${firstOwned.instanceId}\`,
+        id: 'proposal:' + sourceTurnId + ':inventory-remove:' + firstOwned.instanceId,
         sourceTurnId,
         kind: 'inventory-remove',
-        summary: \`Review: the committed reply appears to show \${session.launch.persona.name} losing or giving up \${asset.name}.\`,
+        summary: 'Review: the committed reply appears to show ' + session.launch.persona.name + ' losing or giving up ' + asset.name + '.',
         instanceId: firstOwned.instanceId,
       });
       continue;
@@ -48,19 +49,19 @@ export function deriveStateProposals(session: V2Session, sourceTurnId: string, r
 
     if (!firstOwned.equipped && mentioned('you (?:equip|equipped|wear|wore|put on|strap on|strapped on)', itemName, reply)) {
       proposals.push({
-        id: \`proposal:\${sourceTurnId}:inventory-equip:\${firstOwned.instanceId}\`,
+        id: 'proposal:' + sourceTurnId + ':inventory-equip:' + firstOwned.instanceId,
         sourceTurnId,
         kind: 'inventory-set-equipped',
-        summary: \`Review: the committed reply appears to show \${session.launch.persona.name} equipping \${asset.name}.\`,
+        summary: 'Review: the committed reply appears to show ' + session.launch.persona.name + ' equipping ' + asset.name + '.',
         instanceId: firstOwned.instanceId,
         equipped: true,
       });
     } else if (firstOwned.equipped && mentioned('you (?:unequip|unequipped|remove|removed|take off|took off|unstrap|unstrapped)', itemName, reply)) {
       proposals.push({
-        id: \`proposal:\${sourceTurnId}:inventory-unequip:\${firstOwned.instanceId}\`,
+        id: 'proposal:' + sourceTurnId + ':inventory-unequip:' + firstOwned.instanceId,
         sourceTurnId,
         kind: 'inventory-set-equipped',
-        summary: \`Review: the committed reply appears to show \${session.launch.persona.name} unequipping \${asset.name}.\`,
+        summary: 'Review: the committed reply appears to show ' + session.launch.persona.name + ' unequipping ' + asset.name + '.',
         instanceId: firstOwned.instanceId,
         equipped: false,
       });
