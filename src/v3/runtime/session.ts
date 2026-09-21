@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { V2ClientPackage } from '../contracts/launch';
+import { RELATIONSHIP_DIMENSIONS, type RelationshipState } from '../../runtime/relationships/schema';
+import { removeRelationshipTurns } from '../../runtime/relationships/core';
 import { applyWorldAction, createWorld, worldSchema, type WorldAction } from './world';
 
 export const OUTPUT_PRESETS = { short: 256, normal: 512, long: 1024, marathon: 2048 } as const;
@@ -41,6 +43,34 @@ export const diagnosticsSchema = z.object({
   generationSettings: generationSettingsSchema.optional(),
 });
 export type V2Diagnostics = z.infer<typeof diagnosticsSchema>;
+const relationshipDimensionsSchema = z.object(Object.fromEntries(
+  RELATIONSHIP_DIMENSIONS.map((dimension) => [dimension, z.number().finite().default(0)]),
+) as Record<(typeof RELATIONSHIP_DIMENSIONS)[number], z.ZodDefault<z.ZodNumber>>);
+
+const relationshipEventStateSchema = z.object({
+  id: z.string().min(1),
+  characterId: z.string().min(1),
+  personaId: z.string().min(1),
+  turnId: z.string().min(1),
+  delta: z.number().finite(),
+  reason: z.string().max(2000),
+  dimensionDeltas: z.record(z.string(), z.number().finite()).default({}),
+  createdAt: z.number().finite(),
+});
+
+const relationshipRecordStateSchema = z.object({
+  characterId: z.string().min(1),
+  personaId: z.string().min(1),
+  baselineScore: z.number().finite().default(0),
+  score: z.number().finite().default(0),
+  label: z.string().max(120).default('STRANGER'),
+  dimensions: relationshipDimensionsSchema.default(() => relationshipDimensionsSchema.parse({})),
+  events: z.array(relationshipEventStateSchema).max(20_000).default([]),
+  updatedAt: z.number().finite().default(0),
+});
+
+export const relationshipStateSchema = z.record(z.string(), relationshipRecordStateSchema).default({});
+
 export const turnSchema = z.object({
   id: z.string().min(1), player: z.string().min(1).max(16000), reply: z.string().min(1).max(64000),
   createdAt: z.number(), worldRevision: z.number().int(), diagnostics: diagnosticsSchema,
@@ -54,12 +84,14 @@ export type V2Session = {
   version: 2; engine: 'v2'; id: string; launch: V2ClientPackage;
   world: z.infer<typeof worldSchema>; settings: V2Settings; draft: string;
   turns: V2Turn[]; events: z.infer<typeof eventSchema>[]; nextTurn: number;
+  relationships: RelationshipState;
 };
 
 export function createV2Session(launch: V2ClientPackage): V2Session {
   return {
     version: 2, engine: 'v2', id: crypto.randomUUID(), launch,
     world: createWorld(launch), settings: settingsSchema.parse({}), draft: '', turns: [], events: [], nextTurn: 1,
+    relationships: relationshipStateSchema.parse(launch.relationshipState),
   };
 }
 
@@ -80,10 +112,14 @@ export function deleteLastTurn(session: V2Session): V2Session {
   const resolutionId = `${last.id}:resolution`;
   const remainingEvents = session.events.filter((event) => event.id !== last.id && event.id !== resolutionId);
   const previousWorld = [...remainingEvents].reverse().find((event) => event.kind === 'operator' && event.world)?.world ?? createWorld(session.launch);
+  const relationships = session.launch.character && session.launch.primaryAsset.type === 'character'
+    ? removeRelationshipTurns(session.relationships, session.launch.character.id, session.launch.persona.id, [last.id])
+    : session.relationships;
   return {
     ...session,
     world: previousWorld,
     turns: session.turns.slice(0, -1),
     events: remainingEvents,
+    relationships,
   };
 }
