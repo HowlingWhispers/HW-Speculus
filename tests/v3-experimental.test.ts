@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { publicV2Package } from '../src/v3/contracts/launch';
 import { compileV2Context } from '../src/v3/runtime/context';
 import { generateV2Turn, stripV3ProtocolArtifacts } from '../src/v3/runtime/engine';
-import { createV2Session } from '../src/v3/runtime/session';
+import { createV2Session, deleteLastTurn } from '../src/v3/runtime/session';
 import { MockProvider } from '../src/runtime/providers/mock';
+import { getRelationship } from '../src/runtime/relationships/core';
+import { exportV2Session, importV2Session } from '../src/v3/storage/session';
 import type { ProviderRequest } from '../src/runtime/providers/types';
 import { v2Package } from './v2-fixtures';
 
@@ -71,6 +73,42 @@ describe('V3 experimental protocol isolation', () => {
     expect(packet.prompt).toContain('marker-20');
     expect(packet.prompt).toContain('marker-1');
     expect(packet.estimatedInputTokens).toBeLessThanOrEqual(7000);
+  });
+
+  it('evolves explicit relationship cues without double-counting rerolls and persists them in raw saves', async () => {
+    let value = createV2Session(publicV2Package(v2Package()));
+    const provider = new MockProvider();
+    value.draft = '"Thank you. I trust you."';
+
+    value = await generateV2Turn(value, provider, { now: 1_800_000_100_000 });
+    const characterId = value.launch.character!.id;
+    const personaId = value.launch.persona.id;
+    const turnId = value.turns.at(-1)!.id;
+    const first = getRelationship(value.relationships, characterId, personaId);
+
+    expect(first.score).toBe(10);
+    expect(first.dimensions.trust).toBe(4);
+    expect(first.dimensions.affection).toBe(2);
+    expect(first.events.filter((event) => event.turnId === turnId)).toHaveLength(1);
+
+    const packet = compileV2Context(value, '*I wait.*');
+    expect(packet.prompt).toContain('ORBIS / SESSION RELATIONSHIP STATE');
+    expect(packet.prompt).toContain('"score":10');
+
+    value = await generateV2Turn(value, provider, { reroll: true, now: 1_800_000_100_100 });
+    const rerolled = getRelationship(value.relationships, characterId, personaId);
+    expect(rerolled.score).toBe(10);
+    expect(rerolled.events.filter((event) => event.turnId === turnId)).toHaveLength(1);
+
+    const raw = exportV2Session(value, 1_800_000_100_200);
+    const fresh = createV2Session(publicV2Package(v2Package({ launchId: 'fresh-v3-relationship-launch' })));
+    const restored = importV2Session(raw, fresh);
+    expect(getRelationship(restored.relationships, characterId, personaId).score).toBe(10);
+
+    const deleted = deleteLastTurn(value);
+    const afterDelete = getRelationship(deleted.relationships, characterId, personaId);
+    expect(afterDelete.score).toBe(0);
+    expect(afterDelete.events.filter((event) => event.turnId === turnId)).toHaveLength(0);
   });
 
   it('keeps unrevealed mystery state out of player-visible context', () => {
