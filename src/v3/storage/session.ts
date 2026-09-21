@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { v2StoredPackageSchema, type V2ClientPackage } from '../contracts/launch';
-import { eventSchema, settingsSchema, turnSchema, type V2Session } from '../runtime/session';
+import { eventSchema, relationshipStateSchema, settingsSchema, turnSchema, type V2Session } from '../runtime/session';
 import { assertWorldCanon, assetsFor, createWorld, worldSchema } from '../runtime/world';
 
 export const V2_STORAGE_KEY = 'speculus.session.v3.experimental';
@@ -11,6 +11,7 @@ const stateSchema = z.object({
   version: z.literal(2), engine: z.literal('v2'), world: worldSchema,
   settings: settingsSchema, draft: z.string().max(16000), turns: z.array(turnSchema).max(20000),
   events: z.array(eventSchema).max(40000), nextTurn: z.number().int().positive(),
+  relationships: relationshipStateSchema,
 });
 const identitySchema = z.object({ id: z.string(), revision: z.string(), name: z.string() });
 const sourceSchema = z.object({
