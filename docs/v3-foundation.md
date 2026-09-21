@@ -70,3 +70,29 @@ Rules:
 - rerolls do not repeat inventory operations because they reuse already-resolved world state
 
 The current V3 Setup panel exposes manual add/equip/remove controls as an operator tool. Natural-language inventory resolution remains deferred until a deterministic resolver can prove the intended canonical item and operation.
+
+
+## Review-only state reconciliation
+
+V3 may derive conservative state proposals from a committed renderer reply, but these proposals are not world state.
+
+Current reconciliation rules:
+
+- only exact Orbis-packaged item names are eligible for inventory proposals
+- the first supported proposals are player inventory add/remove/equip/unequip
+- generated prose never directly mutates inventory
+- every proposal records its source turn ID
+- the operator must explicitly Accept or Reject each proposal
+- Reject changes no authoritative state
+- Accept converts the proposal into the same validated WorldAction used by manual inventory controls
+- accepted proposal actions are tagged to their source turn in the operator ledger
+- reroll/delete of the latest turn automatically rolls back accepted reconciliation actions owned by that turn before replacing/removing it
+- raw save/import preserves pending proposals and turn ownership
+
+The proposal extractor is intentionally conservative and may miss legitimate changes. Missing a proposal is safer than inventing authoritative state.
+
+## Mystery progression status
+
+V3 already protects unrevealed mystery state from player-visible context, but automatic or manual mystery progression is not enabled yet.
+
+A mystery progression control must first have a canonical Orbis-side mystery/fact definition contract so Speculus can validate valid stages and revealable fact IDs. Until then, existing mystery runtime state is inspection/context infrastructure only and cannot be freely authored from prose.
