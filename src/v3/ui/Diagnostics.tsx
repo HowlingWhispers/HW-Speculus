@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
+import { V3_ARCHIVE_TURN_COUNT, V3_CHRONICLE_TURN_COUNT, V3_RECENT_EXCHANGE_COUNT } from '../runtime/context';
 import type { V2Diagnostics, V2Session } from '../runtime/session';
 import { assetsFor, perceptionFor, worldClock } from '../runtime/world';
 
-const tabs = ['state', 'context', 'knowledge', 'perception', 'cast', 'provider', 'turns', 'events', 'raw'] as const;
+const tabs = ['state', 'memory', 'domains', 'context', 'knowledge', 'perception', 'cast', 'provider', 'turns', 'events', 'raw'] as const;
 type Tab = (typeof tabs)[number];
 
 function printableTurns(session: V2Session) {
@@ -69,8 +70,27 @@ export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; 
   const knowledgeView = { actor: session.launch.character?.name ?? session.launch.persona.name, knownFacts: view.knownFacts, limitations: view.limitations };
   const perceptionView = { locationId: view.locationId, location, presentActors: view.presentActors, knownFacts: view.knownFacts, limitations: view.limitations };
   const provider = providerView(session, diagnostic);
+  const archiveCandidates = Math.max(0, session.turns.length - V3_RECENT_EXCHANGE_COUNT - V3_CHRONICLE_TURN_COUNT);
+  const memoryView = {
+    committedTurns: session.turns.length,
+    recentFullTurns: Math.min(session.turns.length, V3_RECENT_EXCHANGE_COUNT),
+    chronicleTurns: Math.min(Math.max(0, session.turns.length - V3_RECENT_EXCHANGE_COUNT), V3_CHRONICLE_TURN_COUNT),
+    archiveTurns: Math.min(archiveCandidates, V3_ARCHIVE_TURN_COUNT),
+    beyondArchiveWindow: Math.max(0, archiveCandidates - V3_ARCHIVE_TURN_COUNT),
+    policy: 'Committed-turn derived memory only. Reroll/delete automatically changes the derived memory because there is no independent memory write.',
+  };
+  const domainsView = {
+    inventory: session.world.domains.inventory,
+    relationships: session.world.domains.relationships,
+    resources: session.world.domains.resources,
+    conditions: session.world.domains.conditions,
+    mysteries: session.world.domains.mysteries,
+    chronicleDomain: session.world.domains.chronicle,
+  };
   const content = tab === 'state' ? { world: session.world, clock, location }
-    : tab === 'context' ? contextView
+    : tab === 'memory' ? memoryView
+      : tab === 'domains' ? domainsView
+        : tab === 'context' ? contextView
       : tab === 'knowledge' ? knowledgeView
         : tab === 'perception' ? perceptionView
           : tab === 'cast' ? cast
@@ -92,6 +112,9 @@ export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; 
         <section className="v2-instrument"><h3>World state</h3><dl><dt>Location</dt><dd>{location ?? 'Not anchored'}</dd><dt>World day</dt><dd>Day {clock.simulationDay}</dd><dt>World time</dt><dd>{clock.time}</dd><dt>Day phase</dt><dd>{clock.phase.replaceAll('_', ' ')}</dd><dt>Elapsed world time</dt><dd>{session.world.elapsedSeconds} seconds</dd><dt>State revision</dt><dd>{session.world.revision}</dd><dt>Scene presence</dt><dd>{session.world.locationId ? session.world.actors.filter((actor) => actor.locationId === session.world.locationId).map((actor) => actor.name).join(', ') || 'None' : 'Unknown'}</dd></dl></section>
         <section className="v2-instrument"><h3>Validation</h3><p className={rejected && !selectedTurnId ? 'v2-error-text' : ''}>{rejected && !selectedTurnId ? 'Draft rejected / no commit' : diagnostic ? 'Structural checks passed' : 'Awaiting generation'}</p>{diagnostic?.issues.map((issue) => <p key={issue}>{issue}</p>)}<small>Physical state is protected from prose writes. This is not full semantic canon validation.</small></section>
       </>}
+      {tab === 'memory' && <section className="v2-instrument"><h3>Derived session memory</h3><dl><dt>Full recent turns</dt><dd>{memoryView.recentFullTurns}</dd><dt>Chronicle turns</dt><dd>{memoryView.chronicleTurns}</dd><dt>Archive turns</dt><dd>{memoryView.archiveTurns}</dd><dt>Outside archive window</dt><dd>{memoryView.beyondArchiveWindow}</dd></dl><p className="v2-note">{memoryView.policy}</p><small>Chronicle and archive text are context aids only. Current engine state and Orbis canon outrank them.</small></section>}
+      {tab === 'domains' && <><section className="v2-instrument"><h3>Runtime domains</h3><dl><dt>Inventory</dt><dd>{domainsView.inventory.length}</dd><dt>Relationships</dt><dd>{domainsView.relationships.length}</dd><dt>Resources</dt><dd>{domainsView.resources.length}</dd><dt>Conditions</dt><dd>{domainsView.conditions.length}</dd><dt>Mysteries</dt><dd>{domainsView.mysteries.length}</dd><dt>Chronicle domain</dt><dd>{domainsView.chronicleDomain.length}</dd></dl></section><details className="v2-instrument"><summary>Domain state</summary><pre>{JSON.stringify(domainsView, null, 2)}</pre></details></>}
+
       {tab === 'context' && <>
         {diagnostic ? <section className="v2-instrument"><h3>Generation packet</h3><dl><dt>Input tokens</dt><dd>~{diagnostic.estimatedInputTokens.toLocaleString()}</dd><dt>Output allowance</dt><dd>{diagnostic.outputBudget} tokens</dd><dt>Model</dt><dd>{diagnostic.model}</dd><dt>Completion</dt><dd>{diagnostic.completionStatus}</dd><dt>Duration</dt><dd>{(diagnostic.durationMs / 1000).toFixed(1)}s</dd></dl></section> : <p className="v2-note">The first generation will record its exact prompt and settings here.</p>}
         {diagnostic && <><details className="v2-instrument" open><summary>Included</summary><ul>{diagnostic.included.map((value, index) => <li key={index}>{value}</li>)}</ul></details><details className="v2-instrument"><summary>Omitted ({diagnostic.omitted.length})</summary><ul>{diagnostic.omitted.map((value, index) => <li key={index}>{value}</li>)}</ul></details><details className="v2-instrument"><summary>Compiled prompt</summary><pre>{diagnostic.prompt}</pre></details>{diagnostic.warnings.map((warning) => <p className="v2-note" key={warning}>{warning}</p>)}</>}
