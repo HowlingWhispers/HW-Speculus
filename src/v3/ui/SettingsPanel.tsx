@@ -14,6 +14,11 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
   const [present, setPresent] = useState<string[]>(world.actors.map((actor) => actor.id));
   const [seconds, setSeconds] = useState(60);
   const [fact, setFact] = useState('');
+  const itemAssets = assets.filter((asset) => asset.type === 'item');
+  const [inventoryItemId, setInventoryItemId] = useState(itemAssets[0]?.id ?? '');
+  const [inventoryOwnerId, setInventoryOwnerId] = useState<string>(launch.persona.id);
+  const [inventoryQuantity, setInventoryQuantity] = useState(1);
+  const [inventoryEquipped, setInventoryEquipped] = useState(false);
   const [stopText, setStopText] = useState(settings.stopSequences.join('\n'));
   const actorId = launch.character?.id ?? launch.persona.id;
   const switchToV1 = () => {
@@ -73,6 +78,35 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
       <button type="button" onClick={() => onWorld({ type: 'advance-clock', seconds })}>Advance clock</button>
       <label className="v2-field"><span>Known fact for {launch.character?.name ?? launch.persona.name}</span><textarea rows={2} maxLength={4000} value={fact} onChange={(event) => setFact(event.target.value)} /></label>
       <button type="button" disabled={!fact.trim()} onClick={() => { onWorld({ type: 'record-knowledge', actorId, fact }); setFact(''); }}>Record observed fact</button>
+      <div className="v2-inventory-editor">
+        <h3>Canonical inventory</h3>
+        <small>Only item records already packaged by Orbis can enter authoritative V3 inventory. Generated prose cannot create items.</small>
+        {itemAssets.length ? <>
+          <label className="v2-field"><span>Item</span><select value={inventoryItemId} onChange={(event) => setInventoryItemId(event.target.value)}>{itemAssets.map((asset) => <option value={asset.id} key={asset.id}>{asset.name}</option>)}</select></label>
+          <label className="v2-field"><span>Owner</span><select value={inventoryOwnerId} onChange={(event) => setInventoryOwnerId(event.target.value)}><option value="">Unowned</option>{world.actors.map((actor) => <option value={actor.id} key={actor.id}>{actor.name}</option>)}</select></label>
+          <label className="v2-field"><span>Quantity</span><input type="number" min={1} max={1000000} value={inventoryQuantity} onChange={(event) => setInventoryQuantity(Math.max(1, Math.min(1000000, event.target.valueAsNumber || 1)))} /></label>
+          <label className="v2-check"><input type="checkbox" checked={inventoryEquipped} onChange={(event) => setInventoryEquipped(event.target.checked)} /> Equipped</label>
+          <button type="button" disabled={!inventoryItemId} onClick={() => onWorld({
+            type: 'inventory-add',
+            instanceId: crypto.randomUUID(),
+            canonicalItemId: inventoryItemId,
+            ownerActorId: inventoryOwnerId || null,
+            quantity: inventoryQuantity,
+            equipped: inventoryEquipped,
+          })}>Add canonical item</button>
+        </> : <p className="v2-note">This launch package contains no Orbis item records.</p>}
+        {world.domains.inventory.length ? <div className="v2-inventory-list">
+          {world.domains.inventory.map((item) => {
+            const itemAsset = itemAssets.find((asset) => asset.id === item.canonicalItemId);
+            const owner = world.actors.find((actor) => actor.id === item.ownerActorId);
+            return <div className="v2-inventory-row" key={item.instanceId}>
+              <span><strong>{itemAsset?.name ?? item.canonicalItemId}</strong><small>{owner?.name ?? 'Unowned'} · qty {item.quantity}{item.condition === null ? '' : ` · condition ${Math.round(item.condition * 100)}%`}</small></span>
+              <button type="button" onClick={() => onWorld({ type: 'inventory-set-equipped', instanceId: item.instanceId, equipped: !item.equipped })}>{item.equipped ? 'Unequip' : 'Equip'}</button>
+              <button type="button" className="v2-delete" onClick={() => onWorld({ type: 'inventory-remove', instanceId: item.instanceId })}>Remove</button>
+            </div>;
+          })}
+        </div> : <small>No authoritative inventory items in this session.</small>}
+      </div>
     </details></section>
     <section><h2>Display</h2>
       <label className="v2-check v2-toggle">CRT effects<input type="checkbox" role="switch" checked={settings.crtEffects} onChange={(event) => onSettings({ crtEffects: event.target.checked })} /></label>
