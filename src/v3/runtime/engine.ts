@@ -159,19 +159,20 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
       characterReply: normalizedReply,
       previousScore: relationshipBefore.score,
     });
-    relationships = commitRelationshipEvent(relationshipBase, {
-      characterId: session.launch.character!.id,
-      personaId: session.launch.persona.id,
-      turnId: id,
-      delta: evaluation.delta,
-      reason: evaluation.reason,
-      dimensionDeltas: evaluation.dimensionDeltas,
-      createdAt: at,
-    });
-    relationshipAfter = getRelationship(relationships, session.launch.character!.id, session.launch.persona.id);
-    relationshipEvent = relationshipAfter.events.find((event) => event.turnId === id) ?? null;
-    if (relationshipEvent && relationshipEvent.delta !== 0) {
-      warnings.push(`Relationship state updated: ${relationshipEvent.reason}`);
+    const hasRelationshipChange = evaluation.delta !== 0 || Object.keys(evaluation.dimensionDeltas).length > 0;
+    if (hasRelationshipChange) {
+      relationships = commitRelationshipEvent(relationshipBase, {
+        characterId: session.launch.character!.id,
+        personaId: session.launch.persona.id,
+        turnId: id,
+        delta: evaluation.delta,
+        reason: evaluation.reason,
+        dimensionDeltas: evaluation.dimensionDeltas,
+        createdAt: at,
+      });
+      relationshipAfter = getRelationship(relationships, session.launch.character!.id, session.launch.persona.id);
+      relationshipEvent = relationshipAfter.events.find((event) => event.turnId === id) ?? null;
+      if (relationshipEvent) warnings.push(`Relationship state updated: ${relationshipEvent.reason}`);
     }
   }
   const diagnostics: V2Diagnostics = {
