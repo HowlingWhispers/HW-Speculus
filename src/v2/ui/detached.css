@@ -39,3 +39,44 @@
   .spec-v2 .v2-detached-note { margin: 0 10px 4px; align-items: flex-start; flex-direction: column; gap: 4px; }
   .spec-v2 .v2-detached-note small { text-align: left; }
 }
+
+
+/* Floating/side reader remains usable in very small companion windows. */
+@media (max-width: 520px) {
+  .spec-v2.v2-detached-reader .v2-reader-masthead {
+    padding: 10px 12px;
+  }
+
+  .spec-v2.v2-detached-reader .v2-reader-panel .v2-transcript {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .spec-v2.v2-detached-reader .v2-prose {
+    font-size: clamp(16px, 5vw, 22px);
+    line-height: 1.68;
+  }
+
+  .spec-v2.v2-detached-reader .v2-player .v2-prose {
+    font-size: clamp(15px, 4.6vw, 20px);
+  }
+}
+
+@media (max-height: 480px) {
+  .spec-v2.v2-detached-reader .v2-reader-masthead p,
+  .spec-v2.v2-detached-reader .v2-reader-masthead small {
+    display: none;
+  }
+
+  .spec-v2.v2-detached-reader .v2-reader-masthead {
+    min-height: 50px;
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+
+  .spec-v2.v2-detached-reader .v2-status {
+    min-height: 30px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+}
