@@ -71,9 +71,13 @@ SPECULUS_PUBLIC_ORIGIN=https://spec.thehowlingwhispers.com
 SPECULUS_BRIDGE_SECRET=<shared server-to-server secret>
 ORBIS_GENERATION_API_URL=http://127.0.0.1:8789/api/v1/generation/speculus
 SPECULUS_UPDATE_DATE=<YYYY-MM-DD deployment date>
+STUDIUM_API_URL=http://127.0.0.1:4310
+STUDIUM_BRIDGE_SECRET=<shared Studium ingestion secret>
 ```
 
 `SPECULUS_BRIDGE_SECRET` authorizes Orbis to deposit launch packages. It is not a NovelAI token. `ORBIS_GENERATION_API_URL` must point to the internal shared generation gateway.
+
+When `STUDIUM_API_URL` and `STUDIUM_BRIDGE_SECRET` are configured, committed V2 turns are handed to Studium through the Speculus server. The browser never receives the Studium secret. Research delivery is non-blocking: a Studium outage must not prevent a roleplay turn from committing. The research bundle contains bounded committed player/reply text and small world metadata, but not compiled prompts, diagnostics, provider credentials, generation grants, or hidden Orbis context.
 
 ## Commands
 
