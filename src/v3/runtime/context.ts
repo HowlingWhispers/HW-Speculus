@@ -11,7 +11,11 @@ export const V3_ARCHIVE_TURN_COUNT = 48;
 
 export type V2RenderMode = 'normal' | 'skip-persona' | 'impersonate-persona';
 
-const asText = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value);
+const asText = (value: unknown) => {
+  if (typeof value === 'string') return value;
+  const encoded = JSON.stringify(value);
+  return encoded ?? String(value ?? '');
+};
 
 function clipChronicleText(value: string, maxCharacters: number) {
   const compact = value.replace(/\s+/g, ' ').trim();
