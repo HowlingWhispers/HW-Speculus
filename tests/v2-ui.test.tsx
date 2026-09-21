@@ -42,6 +42,7 @@ describe('V2 terminal interaction', () => {
     saveV2Session(createV2Session(publicV2Package(v2Package())));
     sessionStorage.setItem('speculus.session.v1', 'unchanged'); render(<V2App />);
     await screen.findByLabelText('Your next turn');
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }));
     fireEvent.click(screen.getByRole('button', { name: /^long$/ }));
     expect(screen.getByText(/1024 output tokens/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Your next turn'), { target: { value: 'An unsent draft.' } });
@@ -57,6 +58,7 @@ describe('V2 terminal interaction', () => {
 
     render(<V2App />);
     expect(await screen.findByDisplayValue('Old working draft.')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Session'));
     fireEvent.click(screen.getByRole('button', { name: 'New simulation' }));
 
     await waitFor(() => {
