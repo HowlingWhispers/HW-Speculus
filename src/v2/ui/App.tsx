@@ -8,6 +8,8 @@ import { createV2Session, deleteLastTurn, operateWorld, type V2Diagnostics, type
 import { loadLatestV2LocalAutosave, saveV2LocalAutosave } from '../storage/autosave';
 import { exportV2Session, importV2Session, inspectV2Session, loadV2Session, MAX_V2_FILE_BYTES, saveV2Session, v2ExportFilename } from '../storage/session';
 import { detachedTranscriptChannelName, type DetachedTranscriptMessage } from './detached-channel';
+import { openFloatingReader, openSideReader, supportsFloatingReader } from './reader-window';
+import { ToolMenu } from './ToolMenu';
 import { V2DiagnosticsPanel } from './Diagnostics';
 import { SettingsPanel } from './SettingsPanel';
 import { V2Transcript } from './Transcript';
@@ -45,6 +47,7 @@ export function V2App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [transcriptDetached, setTranscriptDetached] = useState(false);
+  const [readerMode, setReaderMode] = useState<'inline' | 'side' | 'floating'>('inline');
   const controller = useRef<AbortController | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const rootFileInput = useRef<HTMLInputElement>(null);
@@ -53,6 +56,7 @@ export function V2App() {
   const liveSession = useRef<V2Session | null>(null);
   const liveBusy = useRef(false);
   const busy = phase !== null || importing;
+  const floatingReaderSupported = supportsFloatingReader();
 
   const notePhase = (next: EnginePhase) => {
     setPhase(next);
@@ -125,10 +129,12 @@ export function V2App() {
       if (!message || message.sessionId !== session.id) return;
       if (message.type === 'ready') {
         setTranscriptDetached(true);
+        setReaderMode((current) => current === 'inline' ? 'side' : current);
         sendState();
       } else if (message.type === 'closed') {
         if (detachedWindow.current?.closed) detachedWindow.current = null;
         setTranscriptDetached(false);
+        setReaderMode('inline');
       }
     };
     channel.postMessage({ type: 'probe', sessionId: session.id } satisfies DetachedTranscriptMessage);
@@ -149,6 +155,7 @@ export function V2App() {
       if (detachedWindow.current?.closed) {
         detachedWindow.current = null;
         setTranscriptDetached(false);
+        setReaderMode('inline');
       }
     }, 500);
     return () => window.clearInterval(timer);
@@ -186,32 +193,68 @@ export function V2App() {
     } finally { controller.current = null; setPhase(null); }
   };
 
-  const openDetachedTranscript = () => {
-    if (!session) return;
-    if (typeof BroadcastChannel === 'undefined') {
-      setError('This browser does not support the live channel required by the detached reader.');
-      return;
-    }
-    if (detachedWindow.current && !detachedWindow.current.closed) {
+  const ensureReaderChannel = () => {
+    if (typeof BroadcastChannel !== 'undefined') return true;
+    setError('This browser does not support the live channel required by the detached reader.');
+    return false;
+  };
+
+  const openSideTranscript = () => {
+    if (!session || !ensureReaderChannel()) return;
+    if (readerMode === 'side' && detachedWindow.current && !detachedWindow.current.closed) {
       detachedWindow.current.focus();
-      setTranscriptDetached(true);
       return;
     }
-    const url = new URL(window.location.href);
-    url.search = '';
-    url.hash = '';
-    url.searchParams.set('display', session.id);
-    const target = `speculus-v2-display-${session.id.replace(/[^a-z0-9_-]+/gi, '-')}`;
-    const popup = window.open(url.toString(), target, 'popup=yes,width=960,height=900,resizable=yes,scrollbars=yes');
+
+    detachedWindow.current?.close();
+    const popup = openSideReader(session.id, 'speculus-v2-display');
     if (!popup) {
-      setError('The browser blocked the detached reader window. Allow pop-ups for Speculus and try again.');
+      setError('The browser blocked the side reader window. Allow pop-ups for Speculus and try again.');
       setTranscriptDetached(false);
+      setReaderMode('inline');
       return;
     }
+
     detachedWindow.current = popup;
+    setReaderMode('side');
     setTranscriptDetached(true);
     setError('');
     popup.focus();
+  };
+
+  const openFloatingTranscript = async () => {
+    if (!session || !ensureReaderChannel()) return;
+    if (!floatingReaderSupported) {
+      setError('Always-on-top floating reader is unavailable in this browser. Use Pop out to side instead.');
+      return;
+    }
+    if (readerMode === 'floating' && detachedWindow.current && !detachedWindow.current.closed) {
+      detachedWindow.current.focus();
+      return;
+    }
+
+    detachedWindow.current?.close();
+    try {
+      const popup = await openFloatingReader(session.id);
+      detachedWindow.current = popup;
+      setReaderMode('floating');
+      setTranscriptDetached(true);
+      setError('');
+      popup.focus();
+    } catch (cause) {
+      detachedWindow.current = null;
+      setTranscriptDetached(false);
+      setReaderMode('inline');
+      setError(messageOf(cause));
+    }
+  };
+
+  const restoreTranscript = () => {
+    detachedWindow.current?.close();
+    detachedWindow.current = null;
+    setTranscriptDetached(false);
+    setReaderMode('inline');
+    setError('');
   };
 
   const saveNow = () => {
@@ -234,6 +277,7 @@ export function V2App() {
     detachedWindow.current = null;
     sessionStorage.removeItem(PENDING_IMPORT_KEY);
     setTranscriptDetached(false);
+    setReaderMode('inline');
     setRejected(null);
     setError('');
     setStorageError('');
@@ -299,9 +343,7 @@ export function V2App() {
         <div className="v2-transcript-tools">
           <button disabled={busy || !session.turns.length || expired || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => void generate(true)}>Reroll latest</button>
           <button disabled={busy || expired} onClick={() => void impersonate()}>Impersonate</button>
-          <details className="v2-tool-menu">
-            <summary>Turn</summary>
-            <div>
+          <ToolMenu label="Turn">
               <button disabled={busy || expired} onClick={() => void generate(false, true)}>Skip persona turn</button>
               <button className="v2-delete" disabled={busy || !session.turns.length || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => {
                 if (window.confirm('Remove the latest player/reply pair and its resolved state from this V2 session?')) {
@@ -310,21 +352,21 @@ export function V2App() {
                   setRejected(null);
                 }
               }}>Delete latest</button>
-            </div>
-          </details>
-          <details className="v2-tool-menu">
-            <summary>Session</summary>
-            <div>
-              <button type="button" onClick={openDetachedTranscript}>{transcriptDetached ? 'Focus reader' : 'Detach reader'}</button>
+
+          </ToolMenu>
+          <ToolMenu label="Session">
+              <button type="button" onClick={openSideTranscript}>{readerMode === 'side' && transcriptDetached ? 'Focus side reader' : 'Pop out to side'}</button>
+              <button type="button" disabled={!floatingReaderSupported} onClick={() => void openFloatingTranscript()}>{readerMode === 'floating' && transcriptDetached ? 'Focus floating reader' : 'Float always on top'}</button>
+              {transcriptDetached && <button type="button" onClick={restoreTranscript}>Return reader here</button>}
               <button disabled={busy || expired} onClick={startNewSimulation}>New simulation</button>
               <button disabled={busy} onClick={saveNow}>Save now</button>
               <button disabled={busy} onClick={download}>Export raw</button>
               <button disabled={busy} onClick={() => fileInput.current?.click()}>Import raw</button>
-            </div>
-          </details>
+
+          </ToolMenu>
           <input hidden ref={fileInput} type="file" accept=".json,application/json" aria-label="Import V2 session" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFile(file); }} />
         </div>
-        {transcriptDetached && <div className="v2-detached-note"><span>Reading display detached</span><small>Move the reader window to any monitor. Closing it restores the transcript here.</small></div>}
+        {transcriptDetached && <div className="v2-detached-note"><span>{readerMode === 'floating' ? 'Floating reader active' : 'Reader popped out to side'}</span><small>{readerMode === 'floating' ? 'Always-on-top reading display. Closing it restores the transcript here.' : 'Move the reader beside Speculus or onto another monitor. Closing it restores the transcript here.'}</small></div>}
         {(error || storageError || expired) && <div className="v2-fault" role="alert">{storageError || error || 'Authorization expired. Export this session, launch the same record from Orbis, then import the V2 export.'}</div>}
         <form className="v2-composer" onSubmit={(event) => { event.preventDefault(); void generate(); }}>
           <textarea aria-label="Your next turn" placeholder="What do you do next?" value={session.draft} maxLength={16000} disabled={busy} onChange={(event) => setSession({ ...session, draft: event.target.value })} onKeyDown={(event) => {
