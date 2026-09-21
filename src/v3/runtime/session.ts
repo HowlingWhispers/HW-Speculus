@@ -98,6 +98,7 @@ export type V2Turn = z.infer<typeof turnSchema>;
 export const eventSchema = z.object({
   id: z.string().min(1), kind: z.enum(['operator', 'turn']), label: z.string().max(200),
   worldRevision: z.number().int(), at: z.number(), world: worldSchema.optional(),
+  ownerTurnId: z.string().min(1).max(300).nullable().default(null),
 });
 export type V2Session = {
   version: 2; engine: 'v2'; id: string; launch: V2ClientPackage;
@@ -116,22 +117,42 @@ export function createV2Session(launch: V2ClientPackage): V2Session {
   };
 }
 
-export function operateWorld(session: V2Session, action: WorldAction, now = Date.now()): V2Session {
+export function operateWorld(session: V2Session, action: WorldAction, now = Date.now(), ownerTurnId: string | null = null): V2Session {
   const world = applyWorldAction(session.world, action, session.launch);
   return {
     ...session, world,
-    events: [...session.events, { id: `operator:${world.revision}`, kind: 'operator', label: action.type, worldRevision: world.revision, at: now, world }],
+    events: [...session.events, { id: `operator:${world.revision}`, kind: 'operator', label: action.type, worldRevision: world.revision, at: now, world, ownerTurnId }],
   };
+}
+
+export function rollbackTurnOwnedActions(session: V2Session, turnId: string): V2Session {
+  const turnIndex = session.events.findIndex((event) => event.kind === 'turn' && event.id === turnId);
+  if (turnIndex < 0) return session;
+  const trailing = session.events.slice(turnIndex + 1);
+  const unrelated = trailing.find((event) => event.kind === 'operator' && event.ownerTurnId !== turnId);
+  if (unrelated) {
+    throw new Error('Reroll/delete cannot cross later operator state changes. Undo those operator changes first.');
+  }
+
+  const removed = trailing.filter((event) => event.kind === 'operator' && event.ownerTurnId === turnId);
+  if (!removed.length) return session;
+  const remainingEvents = session.events.filter((event) => !(event.kind === 'operator' && event.ownerTurnId === turnId));
+  const targetRevision = session.turns.find((turn) => turn.id === turnId)?.worldRevision ?? session.world.revision;
+  const previousWorld = [...remainingEvents].reverse()
+    .find((event) => event.kind === 'operator' && event.world && event.worldRevision <= targetRevision)?.world
+    ?? createWorld(session.launch);
+  return { ...session, world: previousWorld, events: remainingEvents };
 }
 
 export function deleteLastTurn(session: V2Session): V2Session {
   const last = session.turns.at(-1);
   if (!last) return session;
-  if (last.worldRevision !== session.world.revision) {
+  const rolledBack = rollbackTurnOwnedActions(session, last.id);
+  if (last.worldRevision !== rolledBack.world.revision) {
     throw new Error('Delete latest requires unchanged world state after that turn. Undo later operator changes first.');
   }
   const resolutionId = `${last.id}:resolution`;
-  const remainingEvents = session.events.filter((event) => event.id !== last.id && event.id !== resolutionId);
+  const remainingEvents = rolledBack.events.filter((event) => event.id !== last.id && event.id !== resolutionId);
   const previousWorld = [...remainingEvents].reverse().find((event) => event.kind === 'operator' && event.world)?.world ?? createWorld(session.launch);
   const relationships = session.launch.character && session.launch.primaryAsset.type === 'character'
     ? removeRelationshipTurns(session.relationships, session.launch.character.id, session.launch.persona.id, [last.id])
@@ -142,6 +163,6 @@ export function deleteLastTurn(session: V2Session): V2Session {
     turns: session.turns.slice(0, -1),
     events: remainingEvents,
     relationships,
-    stateProposals: session.stateProposals.filter((proposal) => proposal.sourceTurnId !== last.id),
+    stateProposals: rolledBack.stateProposals.filter((proposal) => proposal.sourceTurnId !== last.id),
   };
 }
