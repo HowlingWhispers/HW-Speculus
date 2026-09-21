@@ -4,6 +4,10 @@ Speculus uses a human-readable release version plus a 7-character Git build id s
 
 ## Unreleased: isolated V2 foundation
 
+- Add canonical operator-controlled V3 inventory using only Orbis-packaged item records and packaged actors.
+- Add V3 inventory controls for owner, quantity, equipped state and removal; generated prose remains unable to author inventory.
+- Persist canonical inventory through the world event ledger and raw save/import validation, and inject relevant inventory into renderer context as read-only engine state.
+
 - Add priority-budgeted V3 context blocks so engine authority, current canon and player input stay protected while optional history/state is admitted by importance.
 - Add tiered long-session memory: 4 full recent exchanges, 12 compact chronicle turns and up to 48 lower-priority archive turns derived from the committed ledger.
 - Add V3 Memory and Domains diagnostics so context tiers and runtime state can be inspected directly.
