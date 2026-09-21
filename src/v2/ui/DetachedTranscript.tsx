@@ -3,13 +3,13 @@ import type { V2Session } from '../runtime/session';
 import { detachedTranscriptChannelName, type DetachedTranscriptMessage } from './detached-channel';
 import { V2Transcript } from './Transcript';
 
-export function V2DetachedTranscript({ sessionId }: { sessionId: string }) {
+export function V2DetachedTranscript({ sessionId, hostWindow = window, hostDocument = document }: { sessionId: string; hostWindow?: Window; hostDocument?: Document }) {
   const [session, setSession] = useState<V2Session | null>(null);
   const [busy, setBusy] = useState(false);
   const supported = typeof BroadcastChannel !== 'undefined';
 
   useEffect(() => {
-    document.title = 'Speculus V2 | Detached Reader';
+    hostDocument.title = 'Speculus V2 | Detached Reader';
     if (!supported) return;
     const channel = new BroadcastChannel(detachedTranscriptChannelName(sessionId));
     const announceReady = () => channel.postMessage({ type: 'ready', sessionId } satisfies DetachedTranscriptMessage);
@@ -27,12 +27,12 @@ export function V2DetachedTranscript({ sessionId }: { sessionId: string }) {
     };
     announceReady();
     const announceClosed = () => channel.postMessage({ type: 'closed', sessionId } satisfies DetachedTranscriptMessage);
-    window.addEventListener('beforeunload', announceClosed);
+    hostWindow.addEventListener('beforeunload', announceClosed);
     return () => {
-      window.removeEventListener('beforeunload', announceClosed);
+      hostWindow.removeEventListener('beforeunload', announceClosed);
       channel.close();
     };
-  }, [sessionId, supported]);
+  }, [sessionId, supported, hostWindow, hostDocument]);
 
   return <main className={`spec-v2 v2-detached-reader ${session?.settings.crtEffects !== false ? 'v2-crt' : ''}`}>
     <header className="v2-masthead v2-reader-masthead">
