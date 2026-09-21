@@ -1,11 +1,208 @@
-import type { V2Session } from './session';
+import type { V2Session, V2Turn } from './session';
 import type { V2TurnResolution } from './resolution';
+import { selectV3ContextBlocks, type V3ContextBlock } from './context-blocks';
 import { SKIPPED_PERSONA_TURN } from './turn-control';
 import { assetsFor, perceptionFor, worldClock } from './world';
 
 export const CONTEXT_CHARACTER_BUDGET = 28_000;
+export const V3_RECENT_EXCHANGE_COUNT = 4;
+export const V3_CHRONICLE_TURN_COUNT = 12;
+export const V3_ARCHIVE_TURN_COUNT = 48;
+
 export type V2RenderMode = 'normal' | 'skip-persona' | 'impersonate-persona';
-const section = (title: string, value: unknown) => `\n${title}\n${typeof value === 'string' ? value : JSON.stringify(value)}\n`;
+
+const asText = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value);
+
+function clipChronicleText(value: string, maxCharacters: number) {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxCharacters) return compact;
+  const tail = Math.max(48, Math.floor(maxCharacters * 0.25));
+  const head = maxCharacters - tail - 5;
+  return `${compact.slice(0, head).trimEnd()} ... ${compact.slice(-tail).trimStart()}`;
+}
+
+function recentExchange(turn: V2Turn, playerName: string, subjectName: string) {
+  return turn.player === SKIPPED_PERSONA_TURN
+    ? `Player ${playerName}: (turn skipped by operator)\n${subjectName}:\n${turn.reply}`
+    : `Player ${playerName}:\n${turn.player}\n${subjectName}:\n${turn.reply}`;
+}
+
+function chronicleExchange(turn: V2Turn, playerName: string, subjectName: string) {
+  const player = turn.player === SKIPPED_PERSONA_TURN
+    ? '(turn skipped by operator)'
+    : clipChronicleText(turn.player, 240);
+  const reply = clipChronicleText(turn.reply, 620);
+  return [
+    `Turn ${turn.id} / world r${turn.worldRevision}`,
+    `${playerName}: ${player}`,
+    `${subjectName}: ${reply}`,
+  ].join('\n');
+}
+
+function archiveLine(turn: V2Turn, playerName: string, subjectName: string) {
+  const player = turn.player === SKIPPED_PERSONA_TURN ? '(skipped)' : clipChronicleText(turn.player, 90);
+  const reply = clipChronicleText(turn.reply, 180);
+  return `${turn.id} | ${playerName}: ${player} | ${subjectName}: ${reply}`;
+}
+
+function historyBlocks(session: V2Session): { blocks: V3ContextBlock[]; omitted: string[] } {
+  const subjectName = session.launch.character?.name ?? 'Simulation Narrator';
+  const playerName = session.launch.persona.name;
+  const recentStart = Math.max(0, session.turns.length - V3_RECENT_EXCHANGE_COUNT);
+  const recentTurns = session.turns.slice(recentStart);
+  const older = session.turns.slice(0, recentStart);
+  const chronicleStart = Math.max(0, older.length - V3_CHRONICLE_TURN_COUNT);
+  const chronicleTurns = older.slice(chronicleStart);
+  const archiveCandidates = older.slice(0, chronicleStart);
+  const archiveTurns = archiveCandidates.slice(-V3_ARCHIVE_TURN_COUNT);
+  const omitted: string[] = [];
+
+  if (archiveCandidates.length > archiveTurns.length) {
+    omitted.push(`${archiveCandidates.length - archiveTurns.length} oldest exchange(s): beyond deterministic V3 archive window`);
+  }
+
+  const blocks: V3ContextBlock[] = [];
+  for (let index = 0; index < recentTurns.length; index += 1) {
+    const turn = recentTurns[index];
+    blocks.push({
+      id: `recent:${turn.id}`,
+      title: 'Recent exchange (context only, not engine authority)',
+      content: recentExchange(turn, playerName, subjectName),
+      priority: 90 + index,
+    });
+  }
+
+  for (let index = 0; index < chronicleTurns.length; index += 1) {
+    const turn = chronicleTurns[index];
+    blocks.push({
+      id: `chronicle:${turn.id}`,
+      title: 'SESSION CHRONICLE / DERIVED FROM COMMITTED TURN',
+      content: chronicleExchange(turn, playerName, subjectName),
+      priority: 58 + index,
+    });
+  }
+
+  if (archiveTurns.length) {
+    blocks.push({
+      id: 'chronicle:archive',
+      title: 'SESSION ARCHIVE RECAP / LOW-PRIORITY DERIVED MEMORY',
+      content: archiveTurns.map((turn) => archiveLine(turn, playerName, subjectName)).join('\n'),
+      priority: 24,
+    });
+  }
+
+  return { blocks, omitted };
+}
+
+function relevantDomainBlocks(session: V2Session): V3ContextBlock[] {
+  const { world, launch } = session;
+  const playerId = launch.persona.id;
+  const presentIds = new Set(
+    world.locationId
+      ? world.actors.filter((actor) => actor.locationId === world.locationId).map((actor) => actor.id)
+      : [playerId],
+  );
+  presentIds.add(playerId);
+
+  const actorName = (actorId: string | null) =>
+    actorId ? world.actors.find((actor) => actor.id === actorId)?.name ?? actorId : null;
+  const assetName = (assetId: string) =>
+    assetsFor(launch).find((asset) => asset.id === assetId)?.name ?? assetId;
+
+  const blocks: V3ContextBlock[] = [];
+  const inventory = world.domains.inventory
+    .filter((item) => item.ownerActorId === null || presentIds.has(item.ownerActorId))
+    .map((item) => ({
+      instanceId: item.instanceId,
+      item: assetName(item.canonicalItemId),
+      owner: actorName(item.ownerActorId),
+      quantity: item.quantity,
+      equipped: item.equipped,
+      condition: item.condition,
+    }));
+  if (inventory.length) {
+    blocks.push({
+      id: 'domain:inventory',
+      title: 'ENGINE INVENTORY STATE / READ ONLY',
+      content: JSON.stringify(inventory),
+      priority: 84,
+    });
+  }
+
+  const relationships = world.domains.relationships
+    .filter((relationship) => relationship.actorIds.includes(playerId)
+      || relationship.actorIds.some((actorId) => presentIds.has(actorId)))
+    .map((relationship) => ({
+      id: relationship.id,
+      actors: relationship.actorIds.map(actorName),
+      stage: relationship.stage,
+      factors: relationship.factors,
+      recentEvents: relationship.events.slice(-12),
+    }));
+  if (relationships.length) {
+    blocks.push({
+      id: 'domain:relationships',
+      title: 'ENGINE RELATIONSHIP STATE / BEHAVIOR CONTEXT / READ ONLY',
+      content: JSON.stringify(relationships),
+      priority: 76,
+    });
+  }
+
+  const resources = world.domains.resources
+    .filter((resource) => resource.ownerActorId === null || presentIds.has(resource.ownerActorId))
+    .map((resource) => ({
+      id: resource.id,
+      definition: assetName(resource.definitionId),
+      owner: actorName(resource.ownerActorId),
+      value: resource.value,
+      maximum: resource.maximum,
+    }));
+  if (resources.length) {
+    blocks.push({
+      id: 'domain:resources',
+      title: 'ENGINE RESOURCE STATE / READ ONLY',
+      content: JSON.stringify(resources),
+      priority: 82,
+    });
+  }
+
+  const conditions = world.domains.conditions
+    .filter((condition) => presentIds.has(condition.actorId))
+    .map((condition) => ({
+      id: condition.id,
+      definition: assetName(condition.definitionId),
+      actor: actorName(condition.actorId),
+      severity: condition.severity,
+    }));
+  if (conditions.length) {
+    blocks.push({
+      id: 'domain:conditions',
+      title: 'ENGINE CONDITION STATE / READ ONLY',
+      content: JSON.stringify(conditions),
+      priority: 83,
+    });
+  }
+
+  const knownMysteries = world.domains.mysteries
+    .filter((mystery) => mystery.knownByActorIds.includes(playerId) || mystery.revealedFactIds.length > 0)
+    .map((mystery) => ({
+      id: mystery.id,
+      mysteryId: mystery.mysteryId,
+      stageIndex: mystery.stageIndex,
+      playerKnows: mystery.knownByActorIds.includes(playerId),
+      revealedFactIds: mystery.revealedFactIds,
+    }));
+  if (knownMysteries.length) {
+    blocks.push({
+      id: 'domain:mysteries:player',
+      title: 'PLAYER-KNOWN MYSTERY STATE / NEVER EXPAND BEYOND REVEALED FACTS',
+      content: JSON.stringify(knownMysteries),
+      priority: 72,
+    });
+  }
+
+  return blocks;
+}
 
 export function v2OutputEnvelope(maxTokens: number) {
   const completionReserveTokens = Math.min(512, Math.max(8, Math.floor(maxTokens * 0.25)));
@@ -32,6 +229,7 @@ export function compileV2Context(
   const subjectPerception = impersonatingPersona
     ? playerPerception
     : resolution?.subjectPerception ?? (subjectActorId ? perceptionFor(world, subjectActorId) : null);
+
   const outputRules = [
     `The provider hard ceiling is ${outputEnvelope.hardLimitTokens} tokens. This is an emergency ceiling, never a target.`,
     `Aim to finish the complete turn by about ${outputEnvelope.targetTokens} tokens and leave roughly ${outputEnvelope.completionReserveTokens} tokens unused as a completion reserve.`,
@@ -40,6 +238,7 @@ export function compileV2Context(
     'Never trade a complete ending for extra description. Every opened quote, asterisk-delimited action, or bracketed inner voice must be closed before stopping.',
     'Ending naturally well below the hard ceiling is correct. Do not pad the response to consume the allowance.',
   ];
+
   const instructions = impersonatingPersona ? [
     'SPECULUS V3 EXPERIMENTAL / PLAYER PERSONA IMPERSONATION CONTRACT',
     `Write only the next in-world turn for the player persona ${launch.persona.name}. This is an explicit operator-requested impersonation of the player persona only.`,
@@ -47,6 +246,7 @@ export function compileV2Context(
     'The engine owns physical locations, elapsed time, simulation day, time of day, day phase and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
     'Do not invent named places, teleport actors, advance the clock, close the scene, or alter engine state.',
     'Use only information available to the player persona from authored persona data, current scene state, current perception and the visible recent exchange.',
+    'Derived chronicle/archive memory is context only. It may remind you of prior committed events but never overrides current engine state or current Orbis canon.',
     'Write only in-world roleplay: dialogue in double quotes, action/narration in single asterisks, inner voice in square brackets.',
     'Use real roleplay punctuation and real line breaks. Do not serialize the response as JSON or escape its punctuation.',
     `Begin directly with ${launch.persona.name}'s action, dialogue, or inner voice. Do not prefix a speaker name, role label, heading, explanation, or menu.`,
@@ -63,6 +263,7 @@ export function compileV2Context(
     'Only explicitly present actors can interact. Related canon is not automatically known, perceived or physically present.',
     'Authorized-subject private context may guide behavior, but must never be exposed as narration unless the player can perceive its outward evidence or already knows it.',
     'Do not narrate NPC private thoughts, hidden motives, offscreen events or unseen facts as player-visible truth.',
+    'Derived chronicle/archive memory is context only. Current engine state and current Orbis canon always outrank it.',
     'Authored world and character rules govern behavior. Apply consistency and causality without adding a universal moral personality.',
     'Write only in-world roleplay: dialogue in double quotes and action/environment narration in single asterisks. Do not invent square-bracket inner voice for NPCs or the player.',
     'Use real roleplay punctuation and real line breaks. Do not serialize the response as JSON or escape its punctuation.',
@@ -72,99 +273,187 @@ export function compileV2Context(
       ? 'The operator explicitly skipped the player persona turn. Continue from current resolved state and do not invent any player action, dialogue, thought, consent, decision or movement.'
       : 'Player input describes an attempt or utterance. It is evidence for resolution, not permission for the renderer to rewrite canon or engine state.',
     ...outputRules,
-    launch.character ? `Authorized subject for behavior: ${launch.character.name}. Render only the outward result available to ${launch.persona.name}.` : `You are the simulation narrator. Render only what ${launch.persona.name} can perceive or already knows.`,
+    launch.character
+      ? `Authorized subject for behavior: ${launch.character.name}. Render only the outward result available to ${launch.persona.name}.`
+      : `You are the simulation narrator. Render only what ${launch.persona.name} can perceive or already knows.`,
   ].join('\n');
 
-  const included = [
-    impersonatingPersona ? 'Persona impersonation contract' : 'Player-perspective rendering contract',
-    'Output completion envelope', 'Source identity', 'Subject', 'Scene', 'World state', 'Player perception',
+  const blocks: V3ContextBlock[] = [
+    {
+      id: 'contract',
+      title: impersonatingPersona ? 'PERSONA IMPERSONATION CONTRACT' : 'PLAYER-PERSPECTIVE RENDERING CONTRACT',
+      content: instructions,
+      priority: 100,
+      required: true,
+    },
+    {
+      id: 'output-envelope',
+      title: 'OUTPUT BUDGET / HARD CEILING',
+      content: asText(outputEnvelope),
+      priority: 100,
+      required: true,
+    },
+    {
+      id: 'source',
+      title: 'SOURCE IDENTITY',
+      content: asText({
+        id: launch.primaryAsset.id,
+        revision: launch.primaryAsset.revision,
+        type: launch.primaryAsset.type,
+        name: launch.primaryAsset.name,
+      }),
+      priority: 100,
+      required: true,
+    },
+    {
+      id: 'subject',
+      title: impersonatingPersona ? 'PLAYER PERSONA / AUTHORIZED SUBJECT' : 'AUTHORIZED SUBJECT / BEHAVIOR SOURCE',
+      content: asText(impersonatingPersona
+        ? launch.persona
+        : launch.character ?? { name: 'SIMULATION NARRATOR', description: launch.primaryAsset.summary }),
+      priority: 100,
+      required: true,
+    },
+    {
+      id: 'viewpoint',
+      title: impersonatingPersona ? 'CHARACTER OR NARRATOR / NEVER IMPERSONATE' : 'PLAYER PERSONA / OUTPUT VIEWPOINT / NEVER IMPERSONATE',
+      content: asText(impersonatingPersona ? launch.character ?? { name: 'SIMULATION NARRATOR' } : launch.persona),
+      priority: 100,
+      required: true,
+    },
+    {
+      id: 'scene',
+      title: 'AUTHORED SCENE',
+      content: asText(launch.scene),
+      priority: 100,
+      required: true,
+    },
+    {
+      id: 'engine-state',
+      title: 'ENGINE STATE / READ ONLY',
+      content: asText({
+        revision: world.revision,
+        elapsedSeconds: world.elapsedSeconds,
+        simulationDay: world.simulationDay,
+        clock,
+        locationId: world.locationId,
+        locationLabel: assetsFor(launch).find((asset) => asset.id === world.locationId)?.name ?? null,
+        actors: world.actors.map(({ knowledge: _private, ...actor }) => actor),
+      }),
+      priority: 100,
+      required: true,
+    },
+    {
+      id: 'player-perception',
+      title: 'PLAYER PERCEPTION / OUTPUT VIEW',
+      content: asText(playerPerception),
+      priority: 100,
+      required: true,
+    },
   ];
-  const omitted: string[] = [];
-  let prompt = instructions
-    + section('OUTPUT BUDGET / HARD CEILING', outputEnvelope)
-    + section('SOURCE IDENTITY', { id: launch.primaryAsset.id, revision: launch.primaryAsset.revision, type: launch.primaryAsset.type, name: launch.primaryAsset.name })
-    + (impersonatingPersona
-      ? section('PLAYER PERSONA / AUTHORIZED SUBJECT', launch.persona)
-      : section('AUTHORIZED SUBJECT / BEHAVIOR SOURCE', launch.character ?? { name: 'SIMULATION NARRATOR', description: launch.primaryAsset.summary }))
-    + (impersonatingPersona
-      ? section('CHARACTER OR NARRATOR / NEVER IMPERSONATE', launch.character ?? { name: 'SIMULATION NARRATOR' })
-      : section('PLAYER PERSONA / OUTPUT VIEWPOINT / NEVER IMPERSONATE', launch.persona))
-    + section('AUTHORED SCENE', launch.scene)
-    + section('ENGINE STATE / READ ONLY', { revision: world.revision, elapsedSeconds: world.elapsedSeconds, simulationDay: world.simulationDay, clock, locationId: world.locationId, locationLabel: assetsFor(launch).find((asset) => asset.id === world.locationId)?.name ?? null, actors: world.actors.map(({ knowledge: _private, ...actor }) => actor) })
-    + section('PLAYER PERCEPTION / OUTPUT VIEW', playerPerception);
 
   if (!impersonatingPersona && subjectPerception) {
-    prompt += section('AUTHORIZED SUBJECT LOCAL CONTEXT / BEHAVIOR ONLY / NOT OUTPUT AUTHORITY', subjectPerception);
-    included.push('Authorized subject local context');
-  }
-  if (!impersonatingPersona && resolution) {
-    prompt += section('TURN RESOLUTION / ENGINE AUTHORITY', {
-      schemaVersion: resolution.schemaVersion,
-      status: resolution.status,
-      worldRevisionBefore: resolution.worldRevisionBefore,
-      worldRevisionAfter: resolution.worldRevisionAfter,
-      elapsedSeconds: resolution.elapsedSeconds,
-      appliedActions: resolution.appliedActions,
-      travel: resolution.travel ?? null,
-      narrativeCheck: resolution.narrativeCheck ?? null,
-      deferredClaims: resolution.deferredClaims,
+    blocks.push({
+      id: 'subject-local-context',
+      title: 'AUTHORIZED SUBJECT LOCAL CONTEXT / BEHAVIOR ONLY / NOT OUTPUT AUTHORITY',
+      content: asText(subjectPerception),
+      priority: 92,
     });
-    included.push('Turn resolution');
   }
 
-  const influence = section('STYLE INFLUENCE / NOT STATE AUTHORITY', { tags: settings.tags, freeform: settings.freeform });
-  const input = impersonatingPersona
-    ? section('OPERATOR REQUEST', `Draft only ${launch.persona.name}'s next player turn. Do not write the character or narrator.`) + '\n[IN-WORLD RESPONSE]\n'
-    : skippingPersona
-      ? section('OPERATOR TURN CONTROL', 'Player persona turn skipped. No player action, dialogue, thought or decision occurred in this turn.') + '\n[IN-WORLD RESPONSE]\n'
-      : section('PLAYER INPUT / ATTEMPT OR UTTERANCE / NOT STATE AUTHORITY', player) + '\n[IN-WORLD RESPONSE]\n';
-  if ((prompt + influence + input).length > CONTEXT_CHARACTER_BUDGET) {
-    throw new Error('Essential scene/state and input exceed the V3 context allowance. Nothing was cut or sent. Shorten the setup/input before retrying.');
+  if (!impersonatingPersona && resolution) {
+    blocks.push({
+      id: 'turn-resolution',
+      title: 'TURN RESOLUTION / ENGINE AUTHORITY',
+      content: asText({
+        schemaVersion: resolution.schemaVersion,
+        status: resolution.status,
+        worldRevisionBefore: resolution.worldRevisionBefore,
+        worldRevisionAfter: resolution.worldRevisionAfter,
+        elapsedSeconds: resolution.elapsedSeconds,
+        appliedActions: resolution.appliedActions,
+        travel: resolution.travel ?? null,
+        narrativeCheck: resolution.narrativeCheck ?? null,
+        deferredClaims: resolution.deferredClaims,
+      }),
+      priority: 100,
+      required: true,
+    });
   }
 
-  const recent = session.turns.slice(-4).map((turn) => '\nRecent exchange (context only, not engine authority)\n'
-    + (turn.player === SKIPPED_PERSONA_TURN
-      ? `Player ${launch.persona.name}: (turn skipped by operator)\n`
-      : `Player ${launch.persona.name}:\n${turn.player}\n`)
-    + `${launch.character?.name ?? 'Simulation Narrator'}:\n${turn.reply}\n`);
-  let history = '';
-  for (let i = recent.length - 1; i >= 0; i -= 1) {
-    if ((prompt + influence + recent[i] + history + input).length > CONTEXT_CHARACTER_BUDGET) {
-      omitted.push(`${recent.length - i} older recent exchange(s): context allowance`);
-      break;
-    }
-    history = recent[i] + history;
-  }
-  if (session.turns.length > 4) omitted.push(`${session.turns.length - 4} older exchange(s): no semantic recall in this foundation`);
-  if (history) included.push('Recent complete exchanges');
+  blocks.push(...relevantDomainBlocks(session));
 
   const sceneIds = new Set([launch.primaryAsset.id, world.locationId, ...playerPerception.presentActors.map((actor) => actor.id)]);
   for (const asset of assetsFor(launch)) {
-    if (!sceneIds.has(asset.id)) { omitted.push(`${asset.name}: outside current player-visible scene`); continue; }
-    if (impersonatingPersona && asset.type === 'character') {
-      omitted.push(`${asset.name}: character private data excluded from player impersonation`);
-      continue;
-    }
-    if (!impersonatingPersona && asset.type === 'character' && launch.character && asset.id !== launch.character.id) {
-      omitted.push(`${asset.name}: unrelated character private data excluded`);
-      continue;
-    }
-    const data = section('RELEVANT AUTHORED RECORD / DATA', asset);
-    if ((prompt + data + influence + history + input).length <= CONTEXT_CHARACTER_BUDGET) {
-      prompt += data; included.push(asset.name);
-    } else omitted.push(`${asset.name}: full record exceeds remaining allowance`);
-    const block = launch.contextBlocks.find((value) => value.id === asset.id);
-    if (block) {
-      const details = section('RELEVANT AUTHORED DETAILS / DATA', block);
-      if ((prompt + details + influence + history + input).length <= CONTEXT_CHARACTER_BUDGET) {
-        prompt += details; included.push(`${asset.name}: authored details`);
-      } else omitted.push(`${asset.name}: authored details exceed remaining allowance`);
+    if (!sceneIds.has(asset.id)) continue;
+    if (impersonatingPersona && asset.type === 'character') continue;
+    if (!impersonatingPersona && asset.type === 'character' && launch.character && asset.id !== launch.character.id) continue;
+
+    blocks.push({
+      id: `asset:${asset.id}`,
+      title: `RELEVANT AUTHORED RECORD / ${asset.name}`,
+      content: asText(asset),
+      priority: 74,
+    });
+    const detail = launch.contextBlocks.find((value) => value.id === asset.id);
+    if (detail) {
+      blocks.push({
+        id: `asset-detail:${asset.id}`,
+        title: `RELEVANT AUTHORED DETAILS / ${asset.name}`,
+        content: asText(detail),
+        priority: 70,
+      });
     }
   }
-  prompt += influence + history + input;
+
+  const history = historyBlocks(session);
+  blocks.push(...history.blocks);
+
+  blocks.push({
+    id: 'style',
+    title: 'STYLE INFLUENCE / NOT STATE AUTHORITY',
+    content: asText({ tags: settings.tags, freeform: settings.freeform }),
+    priority: 42,
+  });
+
+  blocks.push({
+    id: 'input',
+    title: impersonatingPersona
+      ? 'OPERATOR REQUEST'
+      : skippingPersona
+        ? 'OPERATOR TURN CONTROL'
+        : 'PLAYER INPUT / ATTEMPT OR UTTERANCE / NOT STATE AUTHORITY',
+    content: (impersonatingPersona
+      ? `Draft only ${launch.persona.name}'s next player turn. Do not write the character or narrator.`
+      : skippingPersona
+        ? 'Player persona turn skipped. No player action, dialogue, thought or decision occurred in this turn.'
+        : player) + '\n\n[IN-WORLD RESPONSE]',
+    priority: 100,
+    required: true,
+  });
+
+  const selection = selectV3ContextBlocks(blocks, CONTEXT_CHARACTER_BUDGET);
+  const included = selection.included.map((block) => block.title);
+  const omitted = [
+    ...selection.omitted.map((block) => `${block.title}: context allowance`),
+    ...history.omitted,
+  ];
+
+  const outsideScene = assetsFor(launch)
+    .filter((asset) => !sceneIds.has(asset.id))
+    .map((asset) => `${asset.name}: outside current player-visible scene`);
+  omitted.push(...outsideScene);
+
   return {
-    prompt, included, omitted, estimatedInputTokens: Math.ceil(prompt.length / 4), outputBudget: settings.maxTokens,
-    outputTarget: outputEnvelope.targetTokens, completionReserve: outputEnvelope.completionReserveTokens,
-    perception: playerPerception, playerPerception, subjectPerception,
+    prompt: selection.text,
+    included,
+    omitted,
+    estimatedInputTokens: selection.estimatedTokens,
+    outputBudget: settings.maxTokens,
+    outputTarget: outputEnvelope.targetTokens,
+    completionReserve: outputEnvelope.completionReserveTokens,
+    perception: playerPerception,
+    playerPerception,
+    subjectPerception,
   };
 }
