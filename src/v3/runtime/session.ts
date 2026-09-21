@@ -3,6 +3,7 @@ import type { V2ClientPackage } from '../contracts/launch';
 import type { RelationshipState } from '../../runtime/relationships/schema';
 import { removeRelationshipTurns } from '../../runtime/relationships/core';
 import { applyWorldAction, createWorld, worldSchema, type WorldAction } from './world';
+import { stateProposalsSchema, type V3StateProposal } from './state-proposals';
 
 export const OUTPUT_PRESETS = { short: 256, normal: 512, long: 1024, marathon: 2048 } as const;
 export const DEFAULT_TEXT_COLORS = { actionColor: '#d6d1c3', dialogueColor: '#f3e7ad', thoughtColor: '#a9c7d8' } as const;
@@ -87,6 +88,8 @@ export function normalizeRelationshipState(value: unknown): RelationshipState {
   return parsed.success ? parsed.data : {};
 }
 
+export const sessionStateProposalsSchema = stateProposalsSchema;
+
 export const turnSchema = z.object({
   id: z.string().min(1), player: z.string().min(1).max(16000), reply: z.string().min(1).max(64000),
   createdAt: z.number(), worldRevision: z.number().int(), diagnostics: diagnosticsSchema,
@@ -101,6 +104,7 @@ export type V2Session = {
   world: z.infer<typeof worldSchema>; settings: V2Settings; draft: string;
   turns: V2Turn[]; events: z.infer<typeof eventSchema>[]; nextTurn: number;
   relationships: RelationshipState;
+  stateProposals: V3StateProposal[];
 };
 
 export function createV2Session(launch: V2ClientPackage): V2Session {
@@ -108,6 +112,7 @@ export function createV2Session(launch: V2ClientPackage): V2Session {
     version: 2, engine: 'v2', id: crypto.randomUUID(), launch,
     world: createWorld(launch), settings: settingsSchema.parse({}), draft: '', turns: [], events: [], nextTurn: 1,
     relationships: normalizeRelationshipState(launch.relationshipState),
+    stateProposals: [],
   };
 }
 
@@ -137,5 +142,6 @@ export function deleteLastTurn(session: V2Session): V2Session {
     turns: session.turns.slice(0, -1),
     events: remainingEvents,
     relationships,
+    stateProposals: session.stateProposals.filter((proposal) => proposal.sourceTurnId !== last.id),
   };
 }
