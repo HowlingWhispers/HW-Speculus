@@ -1,4 +1,6 @@
 import type { ProviderAdapter } from '../../runtime/providers/types';
+import { commitRelationshipEvent, getRelationship, removeRelationshipTurns } from '../../runtime/relationships/core';
+import { heuristicRelationshipScorer } from '../../runtime/relationships/evaluator';
 import { compileV2Context } from './context';
 import { resolveV2PlayerTurn } from './resolution';
 import { settingsSchema, type V2Diagnostics, type V2Session, type V2Turn } from './session';
@@ -100,8 +102,17 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   const skipPersona = options.reroll ? last!.player === SKIPPED_PERSONA_TURN : options.skipPersona === true;
   const player = skipPersona ? SKIPPED_PERSONA_TURN : (options.reroll ? last!.player : session.draft).trim();
   if (!skipPersona && (!player || player.length > 16000)) throw new Error('Write a player turn between 1 and 16000 characters.');
-  const base = options.reroll ? { ...session, turns: session.turns.slice(0, -1) } : session;
+  const characterPrimary = Boolean(session.launch.character && session.launch.primaryAsset.type === 'character');
+  const relationshipBase = options.reroll && characterPrimary
+    ? removeRelationshipTurns(session.relationships, session.launch.character!.id, session.launch.persona.id, [last!.id])
+    : session.relationships;
+  const base = options.reroll
+    ? { ...session, turns: session.turns.slice(0, -1), relationships: relationshipBase }
+    : { ...session, relationships: relationshipBase };
   const id = options.reroll ? last!.id : `v3:${session.id}:${session.nextTurn}`;
+  const relationshipBefore = characterPrimary
+    ? getRelationship(relationshipBase, session.launch.character!.id, session.launch.persona.id)
+    : null;
 
   options.onPhase?.('resolve');
   const resolved = resolveV2PlayerTurn(base, player, { skipPersona, reroll: options.reroll });
@@ -138,6 +149,31 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   if (sanitizedReply !== decodedReply) warnings.push('Legacy Speculus turn/control markers were stripped before commit.');
   if (canNormalize && normalizedReply !== sanitizedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
   if (compiled.omitted.length) warnings.push('Some history/canon was omitted. Inspect the Context tab for the exact list.');
+  const at = options.now ?? Date.now();
+  let relationships = relationshipBase;
+  let relationshipAfter = relationshipBefore;
+  let relationshipEvent = null;
+  if (characterPrimary && relationshipBefore && !skipPersona) {
+    const evaluation = heuristicRelationshipScorer.evaluate({
+      playerMessage: player,
+      characterReply: normalizedReply,
+      previousScore: relationshipBefore.score,
+    });
+    relationships = commitRelationshipEvent(relationshipBase, {
+      characterId: session.launch.character!.id,
+      personaId: session.launch.persona.id,
+      turnId: id,
+      delta: evaluation.delta,
+      reason: evaluation.reason,
+      dimensionDeltas: evaluation.dimensionDeltas,
+      createdAt: at,
+    });
+    relationshipAfter = getRelationship(relationships, session.launch.character!.id, session.launch.persona.id);
+    relationshipEvent = relationshipAfter.events.find((event) => event.turnId === id) ?? null;
+    if (relationshipEvent && relationshipEvent.delta !== 0) {
+      warnings.push(`Relationship state updated: ${relationshipEvent.reason}`);
+    }
+  }
   const diagnostics: V2Diagnostics = {
     prompt: compiled.prompt, included: compiled.included, omitted: compiled.omitted,
     estimatedInputTokens: compiled.estimatedInputTokens, outputBudget: compiled.outputBudget,
@@ -160,7 +196,6 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
     },
   };
   if (issues.length) throw new V2DraftRejected(`Draft rejected: ${issues.join(' ')}`, diagnostics);
-  const at = options.now ?? Date.now();
   const turn: V2Turn = { id, player, reply: normalizedReply, createdAt: options.reroll ? last!.createdAt : at, worldRevision: resolvedSession.world.revision, diagnostics };
   options.onPhase?.('commit');
   const resolutionEvent = !options.reroll && resolvedSession.world.revision !== base.world.revision
@@ -173,6 +208,7 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   return {
     ...resolvedSession, draft: options.reroll || skipPersona ? session.draft : '', turns: [...resolvedSession.turns, turn],
     nextTurn: session.nextTurn + (options.reroll ? 0 : 1),
+    relationships,
     events: options.reroll
       ? session.events.map((event) => event.id === id ? { ...event, label: skipPersona ? 'Reply rerolled / persona skipped' : 'Reply rerolled', at } : event)
       : [...resolvedSession.events, ...(resolutionEvent ? [resolutionEvent] : []), { id, kind: 'turn', label: skipPersona ? 'Reply committed / persona skipped' : 'Reply committed', worldRevision: resolvedSession.world.revision, at }],
