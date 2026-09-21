@@ -13,6 +13,12 @@ const generationSchema = z.object({
   stopSequences: z.array(z.string().min(1).max(200)).max(16),
   continueToEndOfSentence: z.boolean(), reroll: z.boolean().optional(),
 });
+const researchRetractionSchema = z.object({
+  launchId: z.string().min(8).max(200),
+  sessionId: z.string().min(1).max(200),
+  turnId: z.string().min(1).max(200),
+});
+
 const researchObservationSchema = z.object({
   launchId: z.string().min(8).max(200),
   sessionId: z.string().min(1).max(200),
@@ -124,6 +130,40 @@ export function createV2Router(options: { production?: boolean } = {}) {
     const lifetime = Math.max(1, Math.floor((value.expiresAt - Date.now()) / 1000));
     response.setHeader('Set-Cookie', `${cookieName(value.launchId)}=${seal(session)}; HttpOnly; SameSite=Strict; Path=/api/v2; Max-Age=${lifetime}${options.production ? '; Secure' : ''}`);
     response.json({ package: publicV2Package(value), ...(deposit.resumeSave ? { resumeSave: deposit.resumeSave } : {}) });
+  });
+
+  router.post('/research/retract', async (request, response, next) => {
+    try {
+      const origin = request.get('origin');
+      const expectedOrigin = (process.env.SPECULUS_PUBLIC_ORIGIN || 'https://spec.thehowlingwhispers.com').replace(/\/$/, '');
+      if (options.production && origin !== expectedOrigin) return response.status(403).json({ error: 'Invalid V2 request origin.' });
+
+      const body = researchRetractionSchema.parse(request.body);
+      const session = authorization(request, body.launchId);
+      if (!session) return response.status(401).json({ error: 'V2 authorization expired. Launch this record again from Orbis.' });
+
+      const studiumBase = (process.env.STUDIUM_API_URL ?? '').trim().replace(/\/$/, '');
+      const studiumSecret = process.env.STUDIUM_BRIDGE_SECRET ?? '';
+      if (!studiumBase || !studiumSecret) {
+        return response.status(202).json({ ok: true, retracted: false, reason: 'studium_disabled' });
+      }
+
+      const bundleId = `speculus:${body.sessionId}:${body.turnId}`;
+      const upstream = await fetch(`${studiumBase}/api/v1/bundles/${encodeURIComponent(bundleId)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${studiumSecret}` },
+        signal: AbortSignal.timeout(5000),
+      });
+
+      if (upstream.status === 404) {
+        return response.status(202).json({ ok: true, retracted: false, reason: 'not_found', bundleId });
+      }
+      if (!upstream.ok) {
+        return response.status(502).json({ error: `Studium retraction returned HTTP ${upstream.status}.` });
+      }
+
+      return response.status(202).json({ ok: true, retracted: true, bundleId });
+    } catch (error) { next(error); }
   });
 
   router.post('/research', async (request, response, next) => {
