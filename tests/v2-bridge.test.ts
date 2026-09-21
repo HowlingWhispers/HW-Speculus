@@ -133,6 +133,90 @@ describe('separate V1/V2 bridge authorization', () => {
     expect(raw).not.toContain('test-only-opaque-generation-grant');
   });
 
+  it('retracts a deleted V2/V3 research turn using the same stable bundle identity', async () => {
+    env();
+
+    const deleted: string[] = [];
+    const studium = express();
+    studium.use(express.json());
+    studium.delete('/api/v1/bundles/:bundleId', (req, res) => {
+      deleted.push(req.params.bundleId);
+      res.json({ ok: true, removed: true });
+    });
+    vi.stubEnv('STUDIUM_API_URL', await listen(studium));
+    vi.stubEnv('STUDIUM_BRIDGE_SECRET', 'test-studium-bridge-secret');
+
+    const base = await listen(createApp());
+    const launchId = 'studium-retract-launch';
+    const packageValue = v2Package({
+      launchId,
+      relatedAssets: [
+        { id: 'world:test-world', type: 'world', revision: 'world-rev-1', name: 'Test World', summary: 'Fixture world.', data: {} },
+      ],
+    });
+    const deposited = await post(base, '/api/v2/launch', packageValue, auth);
+    const launchUrl = (await deposited.json() as { launchUrl: string }).launchUrl;
+    const code = new URL(launchUrl).searchParams.get('launch');
+    const claimed = await fetch(`${base}/api/v2/launch/${code}`);
+    const cookie = claimed.headers.get('set-cookie')!.split(';')[0];
+
+    const response = await post(base, '/api/v2/research/retract', {
+      launchId,
+      sessionId: 'session-fixture',
+      turnId: 'turn:7',
+    }, { Cookie: cookie });
+
+    expect(response.status).toBe(202);
+    expect(deleted).toEqual(['speculus:session-fixture:turn:7']);
+  });
+
+  it('preserves V3 identity in Studium research records', async () => {
+    env();
+
+    const observed: Array<Record<string, unknown>> = [];
+    const studium = express();
+    studium.use(express.json());
+    studium.post('/api/v1/bundles', (req, res) => {
+      observed.push(req.body);
+      res.status(201).json({ ok: true, inserted: true });
+    });
+    vi.stubEnv('STUDIUM_API_URL', await listen(studium));
+    vi.stubEnv('STUDIUM_BRIDGE_SECRET', 'test-studium-bridge-secret');
+
+    const base = await listen(createApp());
+    const launchId = 'studium-v3-launch';
+    const packageValue = v2Package({
+      launchId,
+      relatedAssets: [
+        { id: 'world:test-world', type: 'world', revision: 'world-rev-1', name: 'Test World', summary: 'Fixture world.', data: {} },
+      ],
+    });
+    const deposited = await post(base, '/api/v2/launch', packageValue, auth);
+    const launchUrl = (await deposited.json() as { launchUrl: string }).launchUrl;
+    const code = new URL(launchUrl).searchParams.get('launch');
+    const claimed = await fetch(`${base}/api/v2/launch/${code}`);
+    const cookie = claimed.headers.get('set-cookie')!.split(';')[0];
+
+    const response = await post(base, '/api/v2/research', {
+      launchId,
+      sessionId: 'session-v3',
+      turnId: 'turn:1',
+      occurredAt: Date.now(),
+      player: 'Look around.',
+      reply: 'The room is quiet.',
+      worldRevision: 1,
+      locationId: null,
+      reroll: false,
+      engine: 'v3',
+    }, { Cookie: cookie });
+
+    expect(response.status).toBe(202);
+    const raw = JSON.stringify(observed[0]);
+    expect(raw).toContain('"kind":"speculus_v3_turn"');
+    expect(raw).toContain('"speculus-v3"');
+    expect(raw).not.toContain('"speculus-v2"');
+  });
+
   it.each([1, 2] as const)('shows the underlying Orbis/NovelAI error in V%s without echoing upstream data', async (version) => {
     env(); const gateway = express(); gateway.use(express.json());
     const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
