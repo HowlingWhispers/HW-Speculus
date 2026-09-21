@@ -53,3 +53,20 @@ The future V3 world-domain relationship model remains separate from this session
 ## Hidden-state boundary
 
 V3 runtime mystery state is not automatically exposed to the renderer. Only player-known/revealed mystery state may enter player-visible context, and injected mystery state is explicitly forbidden from expanding beyond revealed facts.
+
+
+## Canonical inventory
+
+V3 has an authoritative inventory domain for item instances. Inventory is changed only through explicit trusted world actions.
+
+Rules:
+
+- every inventory instance must reference an item record already packaged by Orbis
+- owners must be packaged actors or null/unowned
+- generated roleplay prose cannot create, remove, equip or transfer inventory
+- inventory actions increment world revision and are captured in the operator ledger
+- raw session export/import preserves inventory state and validates item/actor references
+- the renderer receives relevant inventory as read-only engine state
+- rerolls do not repeat inventory operations because they reuse already-resolved world state
+
+The current V3 Setup panel exposes manual add/equip/remove controls as an operator tool. Natural-language inventory resolution remains deferred until a deterministic resolver can prove the intended canonical item and operation.
