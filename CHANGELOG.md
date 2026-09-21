@@ -4,6 +4,12 @@ Speculus uses a human-readable release version plus a 7-character Git build id s
 
 ## Unreleased: isolated V2 foundation
 
+- Send committed V3 turns to Studium with explicit V3 research identity instead of leaving World Brain experiments invisible to research.
+- Retract a turn's Studium research bundle when the latest committed turn is deleted; rerolls continue replacing the same stable research identity.
+- Make V2 and V3 terminal-first by default with Setup and Diagnostics closed until requested.
+- Group low-frequency turn/session operations into compact menus so the transcript and composer remain the dominant workspace.
+- Change the V2/V3 composer to Enter-to-send and Shift+Enter for a newline.
+
 - Begin the V3 experimental runtime as an isolated copy of the working V2 client baseline while V2 remains the stable fallback.
 - Add a dedicated `/v3` entry route. V3 is intentionally built on V2 first, then V2-derived systems can be removed or replaced inside V3 without destabilizing V2.
 - Document V3 protocol isolation as a hard requirement: internal turn-boundary markers must never reach player-visible chat.
