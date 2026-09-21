@@ -80,10 +80,10 @@ Claims and generation responses are not cacheable. Production cookies are Secure
    structure/control-token leakage, not every narrative assertion. Add structured
    action proposals, deterministic/trusted rule resolution and claim-level
    validation before generated prose can describe committed physical consequences.
-2. **Spacetime:** no movement graph, distances, line of sight, travel costs,
-   body geometry or automatic turn duration yet. Do not label the operator controls
-   as a finished physics engine. These rules are required before the resolver may
-   authoritatively move actors or advance time from natural-language actions.
+2. **Spacetime:** canonical direct-reference travel and elapsed travel time now exist
+   for packaged place data, but there is still no generalized movement graph, line
+   of sight, body geometry, routefinding or complete physics engine. Do not treat
+   the current travel resolver as finished spatial simulation.
 3. **Cognition:** initial actor slots are the player and optional primary character.
    Related characters are not automatically present or autonomous. Goals,
    motivations and richer actor-local perception remain next-phase work.
