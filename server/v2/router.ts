@@ -29,6 +29,7 @@ const researchObservationSchema = z.object({
   worldRevision: z.number().int().nonnegative(),
   locationId: z.string().max(200).nullable(),
   reroll: z.boolean().default(false),
+  engine: z.enum(['v2', 'v3']).default('v2'),
 });
 
 const resumeSaveSchema = z.object({
@@ -185,12 +186,12 @@ export function createV2Router(options: { production?: boolean } = {}) {
         return response.status(202).json({ ok: true, forwarded: false, reason: 'world_not_packaged' });
       }
 
-      const recordId = `speculus:v2:${body.sessionId}:${body.turnId}`;
+      const recordId = `speculus:${body.engine}:${body.sessionId}:${body.turnId}`;
       const observedAt = new Date(body.occurredAt).toISOString();
       const player = clip(body.player, 1800);
       const reply = clip(body.reply, 1800);
       const tags = [
-        'speculus-v2',
+        `speculus-${body.engine}`,
         `source:${session.source.type}`,
         body.reroll ? 'reroll' : 'committed-turn',
         ...(body.locationId && body.locationId.length <= 80 ? [`location:${body.locationId}`] : []),
@@ -206,7 +207,7 @@ export function createV2Router(options: { production?: boolean } = {}) {
         records: [{
           recordId,
           occurredAt: observedAt,
-          kind: 'speculus_v2_turn',
+          kind: `speculus_${body.engine}_turn`,
           summary: `PLAYER TURN\n${player}\n\nSIMULATION REPLY\n${reply}`,
           evidence: [
             `Player: ${clip(body.player, 900)}`,
