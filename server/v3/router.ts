@@ -32,16 +32,26 @@ const researchObservationSchema = z.object({
   engine: z.literal('v3').default('v3'),
 });
 
-const resumeSaveSchema = z.object({
-  format: z.literal('speculus-v2-session'),
-  version: z.literal(2),
-  engine: z.literal('v2'),
-  source: z.object({
-    id: z.string().min(1).max(200),
-    type: z.string().min(1).max(40),
-    revision: z.string().min(1).max(200),
-  }).passthrough(),
+const resumeSaveSourceSchema = z.object({
+  id: z.string().min(1).max(200),
+  type: z.string().min(1).max(40),
+  revision: z.string().min(1).max(200),
 }).passthrough();
+
+const resumeSaveSchema = z.union([
+  z.object({
+    format: z.literal('speculus-v3-session'),
+    version: z.literal(3),
+    engine: z.literal('v3'),
+    source: resumeSaveSourceSchema,
+  }).passthrough(),
+  z.object({
+    format: z.literal('speculus-v2-session'),
+    version: z.literal(2),
+    engine: z.literal('v2'),
+    source: resumeSaveSourceSchema,
+  }).passthrough(),
+]);
 const launchDepositSchema = z.object({
   package: v3LaunchSchema,
   resumeSave: resumeSaveSchema.optional(),
