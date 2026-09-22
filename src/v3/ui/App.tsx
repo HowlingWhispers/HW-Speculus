@@ -1,24 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseV3ClientPackage, type V3ClientPackage } from '../contracts/launch';
-import { V2BrowserProvider } from '../providers/browser';
+import { V3BrowserProvider } from '../providers/browser';
 import { generateV2Turn, V2DraftRejected, type EnginePhase } from '../runtime/engine';
 import { generateV2PersonaDraft } from '../runtime/persona-draft';
 import { retractLatestTurnFromStudium, submitLatestTurnToStudium } from '../research/studium';
-import { createV2Session, deleteLastTurn, operateWorld, type V2Diagnostics, type V2Session } from '../runtime/session';
+import { createV3Session, deleteLastTurn, operateWorld, type V3Diagnostics, type V3Session } from '../runtime/session';
 import { acceptStateProposal, rejectStateProposal } from '../runtime/state-review';
-import { loadLatestV2LocalAutosave, saveV2LocalAutosave } from '../storage/autosave';
-import { exportV2Session, importV2Session, inspectV2Session, loadV2Session, MAX_V2_FILE_BYTES, saveV2Session, v2ExportFilename } from '../storage/session';
+import { loadLatestV3LocalAutosave, saveV3LocalAutosave } from '../storage/autosave';
+import { exportV3Session, importV3Session, inspectV3Session, loadV3Session, MAX_V3_FILE_BYTES, saveV3Session, v3ExportFilename } from '../storage/session';
 import { detachedTranscriptChannelName, type DetachedTranscriptMessage } from './detached-channel';
 import { openFloatingReader, openSideReader, supportsFloatingReader } from './reader-window';
 import { ToolMenu } from './ToolMenu';
-import { V2DiagnosticsPanel } from './Diagnostics';
+import { V3DiagnosticsPanel } from './Diagnostics';
 import { SettingsPanel } from './SettingsPanel';
 import { V2Transcript } from './Transcript';
 
 const PIPELINE_STEPS = ['resolve', 'context', 'generate', 'validate', 'commit'] as const;
 const PENDING_IMPORT_KEY = 'speculus.pending-import.v3.experimental';
 
-type PendingSaveIdentity = ReturnType<typeof inspectV2Session>;
+type PendingSaveIdentity = ReturnType<typeof inspectV3Session>;
 
 let claim: { code: string; promise: Promise<V3ClientPackage> } | null = null;
 function claimPackage(code: string) {
@@ -33,8 +33,8 @@ function claimPackage(code: string) {
 }
 const messageOf = (error: unknown) => error instanceof Error ? error.message : 'V3 could not complete this action.';
 
-export function V2App() {
-  const [session, setSession] = useState<V2Session | null>(null);
+export function V3App() {
+  const [session, setSession] = useState<V3Session | null>(null);
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState('');
   const [storageError, setStorageError] = useState('');
@@ -44,7 +44,7 @@ export function V2App() {
   const [pendingSave, setPendingSave] = useState<PendingSaveIdentity | null>(null);
   const importLock = useRef(false);
   const [importRevision, setImportRevision] = useState(0);
-  const [rejected, setRejected] = useState<V2Diagnostics | null>(null);
+  const [rejected, setRejected] = useState<V3Diagnostics | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [transcriptDetached, setTranscriptDetached] = useState(false);
@@ -54,7 +54,7 @@ export function V2App() {
   const rootFileInput = useRef<HTMLInputElement>(null);
   const detachedWindow = useRef<Window | null>(null);
   const detachedChannel = useRef<BroadcastChannel | null>(null);
-  const liveSession = useRef<V2Session | null>(null);
+  const liveSession = useRef<V3Session | null>(null);
   const liveBusy = useRef(false);
   const busy = phase !== null || importing;
   const floatingReaderSupported = supportsFloatingReader();
@@ -75,11 +75,11 @@ export function V2App() {
     const code = new URLSearchParams(window.location.search).get('launch');
     void (async () => {
       try {
-        let next = code ? createV2Session(await claimPackage(code)) : loadV2Session();
+        let next = code ? createV3Session(await claimPackage(code)) : loadV3Session();
         if (code && next) {
           let pending = sessionStorage.getItem(PENDING_IMPORT_KEY);
           if (!pending) {
-            const latest = loadLatestV2LocalAutosave();
+            const latest = loadLatestV3LocalAutosave();
             const source = latest?.identity;
             const primary = next.launch.primaryAsset;
             if (latest && source?.id === primary.id && source.type === primary.type && source.revision === primary.revision) {
@@ -88,7 +88,7 @@ export function V2App() {
           }
           if (pending) {
             try {
-              next = importV2Session(pending, next);
+              next = importV3Session(pending, next);
               sessionStorage.removeItem(PENDING_IMPORT_KEY);
             } catch (cause) {
               setError(`The staged save was not loaded: ${messageOf(cause)}`);
@@ -108,8 +108,8 @@ export function V2App() {
   useEffect(() => {
     if (!session) return;
     try {
-      saveV2Session(session);
-      saveV2LocalAutosave(session);
+      saveV3Session(session);
+      saveV3LocalAutosave(session);
       setStorageError('');
     } catch {
       setStorageError('Local save storage is unavailable or full. Export your session now to preserve it.');
@@ -167,7 +167,7 @@ export function V2App() {
     const active = new AbortController();
     controller.current = active; setError(''); setRejected(null); setPhaseSeen([]);
     try {
-      const next = await generateV2Turn(session, new V2BrowserProvider(session.launch.launchId), {
+      const next = await generateV2Turn(session, new V3BrowserProvider(session.launch.launchId), {
         reroll, skipPersona, signal: active.signal, onPhase: notePhase,
       });
       if (!active.signal.aborted) {
@@ -185,7 +185,7 @@ export function V2App() {
     const active = new AbortController();
     controller.current = active; setError(''); setRejected(null); setPhaseSeen([]);
     try {
-      const draft = await generateV2PersonaDraft(session, new V2BrowserProvider(session.launch.launchId), {
+      const draft = await generateV2PersonaDraft(session, new V3BrowserProvider(session.launch.launchId), {
         signal: active.signal, onPhase: notePhase,
       });
       if (!active.signal.aborted) setSession({ ...session, draft });
@@ -261,8 +261,8 @@ export function V2App() {
   const saveNow = () => {
     if (!session) return;
     try {
-      saveV2Session(session);
-      saveV2LocalAutosave(session);
+      saveV3Session(session);
+      saveV3LocalAutosave(session);
       setStorageError('');
       setError('');
     } catch {
@@ -284,25 +284,25 @@ export function V2App() {
     setStorageError('');
     setPhaseSeen([]);
     setImportRevision((value) => value + 1);
-    setSession(createV2Session(session.launch));
+    setSession(createV3Session(session.launch));
   };
 
   const download = () => {
     if (!session) return;
     try {
-      const url = URL.createObjectURL(new Blob([exportV2Session(session)], { type: 'application/json' }));
+      const url = URL.createObjectURL(new Blob([exportV3Session(session)], { type: 'application/json' }));
       const anchor = document.createElement('a'); anchor.href = url;
-      anchor.download = v2ExportFilename(session);
+      anchor.download = v3ExportFilename(session);
       anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (cause) { setError(messageOf(cause)); }
   };
 
   const importFile = async (file: File) => {
     if (!session || controller.current || importLock.current) return;
-    if (file.size > MAX_V2_FILE_BYTES) { setError('V3 imports are limited to 16 MB.'); return; }
+    if (file.size > MAX_V3_FILE_BYTES) { setError('V3 imports are limited to 16 MB.'); return; }
     importLock.current = true; setImporting(true);
     try {
-      const next = importV2Session(await file.text(), session);
+      const next = importV3Session(await file.text(), session);
       if (!window.confirm('Replace this V3 session with the imported transcript and state? Export the current session first if you want to keep it. V1 is unaffected.')) return;
       setSession(next); setImportRevision((value) => value + 1); setRejected(null); setError('');
     } catch (cause) { setError(messageOf(cause)); }
@@ -311,10 +311,10 @@ export function V2App() {
 
   const stageRootSave = async (file?: File) => {
     if (!file) return;
-    if (file.size > MAX_V2_FILE_BYTES) { setError('V3 imports are limited to 16 MB.'); return; }
+    if (file.size > MAX_V3_FILE_BYTES) { setError('V3 imports are limited to 16 MB.'); return; }
     try {
       const raw = await file.text();
-      const identity = inspectV2Session(raw);
+      const identity = inspectV3Session(raw);
       sessionStorage.setItem(PENDING_IMPORT_KEY, raw);
       setPendingSave(identity);
       setError('');
@@ -396,7 +396,7 @@ export function V2App() {
           <div><small>Enter to send · Shift+Enter for newline{transcriptDetached ? ' / detached reader live' : ''}</small>{busy ? <button type="button" onClick={() => controller.current?.abort()}>Cancel</button> : <button className="v2-send" disabled={!session.draft.trim() || expired}>Send</button>}</div>
         </form>
       </section>
-      {showDiagnostics && <V2DiagnosticsPanel session={session} rejected={rejected} />}
+      {showDiagnostics && <V3DiagnosticsPanel session={session} rejected={rejected} />}
     </div> : <section className="v2-panel v2-boot">
       <span className="v2-eyebrow">V3 / BOOT SEQUENCE</span>
       <h2>{booting ? 'Reading simulation medium...' : pendingSave ? 'Save identified' : 'Open a simulation or load a save'}</h2>
