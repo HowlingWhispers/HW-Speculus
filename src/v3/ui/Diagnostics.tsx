@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { V3_ARCHIVE_TURN_COUNT, V3_CHRONICLE_TURN_COUNT, V3_RECENT_EXCHANGE_COUNT } from '../runtime/context';
-import type { V2Diagnostics, V2Session } from '../runtime/session';
+import type { V3Diagnostics, V3Session } from '../runtime/session';
 import { assetsFor, perceptionFor, worldClock } from '../runtime/world';
 
 const tabs = ['state', 'memory', 'domains', 'review', 'context', 'knowledge', 'perception', 'cast', 'provider', 'turns', 'events', 'raw'] as const;
 type Tab = (typeof tabs)[number];
 
-function printableTurns(session: V2Session) {
+function printableTurns(session: V3Session) {
   return session.turns.map((turn, index) => [
     `TURN ${String(index + 1).padStart(3, '0')} / ${turn.id}`,
     `PLAYER · ${session.launch.persona.name}\n${turn.player}`,
@@ -14,7 +14,7 @@ function printableTurns(session: V2Session) {
   ].join('\n\n')).join('\n\n========================================\n\n');
 }
 
-function providerView(session: V2Session, diagnostic: V2Diagnostics | undefined) {
+function providerView(session: V3Session, diagnostic: V3Diagnostics | undefined) {
   if (!diagnostic) return { status: 'No generated turn has produced provider diagnostics yet.' };
   const settings = diagnostic.generationSettings ?? {
     output: session.settings.output,
@@ -41,7 +41,7 @@ function providerView(session: V2Session, diagnostic: V2Diagnostics | undefined)
   };
 }
 
-export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; rejected: V2Diagnostics | null }) {
+export function V3DiagnosticsPanel({ session, rejected }: { session: V3Session; rejected: V3Diagnostics | null }) {
   const [tab, setTab] = useState<Tab>('state');
   const [selectedTurnId, setSelectedTurnId] = useState('');
   const selectedTurn = selectedTurnId ? session.turns.find((turn) => turn.id === selectedTurnId) : session.turns.at(-1);
@@ -139,3 +139,5 @@ export function V2DiagnosticsPanel({ session, rejected }: { session: V2Session; 
     <div className="v2-diagnostic-actions"><button type="button" onClick={() => void navigator.clipboard?.writeText(copyOutput)}>Copy buffer</button></div>
   </aside>;
 }
+
+export { V3DiagnosticsPanel as V2DiagnosticsPanel };
