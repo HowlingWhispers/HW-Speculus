@@ -29,7 +29,7 @@ const researchObservationSchema = z.object({
   worldRevision: z.number().int().nonnegative(),
   locationId: z.string().max(200).nullable(),
   reroll: z.boolean().default(false),
-  engine: z.enum(['v2', 'v3']).default('v2'),
+  engine: z.literal('v3').default('v3'),
 });
 
 const resumeSaveSchema = z.object({
@@ -50,11 +50,11 @@ const launchDepositSchema = z.object({
   const source = value.resumeSave.source;
   const primary = value.package.primaryAsset;
   if (source.id !== primary.id || source.type !== primary.type || source.revision !== primary.revision) {
-    context.addIssue({ code: 'custom', message: 'Resume save does not match the fresh V2 launch source revision.', path: ['resumeSave', 'source'] });
+    context.addIssue({ code: 'custom', message: 'Resume save does not match the fresh V3 launch source revision.', path: ['resumeSave', 'source'] });
   }
 });
 
-type V3Authorization = GenerationSession & { version: 2; model: string; worldId: string | null };
+type V3Authorization = GenerationSession & { version: 3; model: string; worldId: string | null };
 type V3Deposit = z.infer<typeof launchDepositSchema>;
 const cookieName = (id: string) => `speculus_v3_${createHash('sha256').update(id).digest('hex').slice(0, 24)}`;
 const key = () => createHash('sha256').update(`speculus-v3-authorization:${process.env.SPECULUS_BRIDGE_SECRET}`).digest();
@@ -85,7 +85,7 @@ function authorization(request: Request, id: string): V3Authorization | null {
     const decipher = createDecipheriv('aes-256-gcm', key(), iv);
     decipher.setAuthTag(tag);
     const session = JSON.parse(Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8')) as V3Authorization;
-    return session.version === 2 && session.launchId === id && session.expiresAt > Date.now() ? session : null;
+    return session.version === 3 && session.launchId === id && session.expiresAt > Date.now() ? session : null;
   } catch { return null; }
 }
 
@@ -106,7 +106,7 @@ export function createV3Router(options: { production?: boolean } = {}) {
         return response.status(401).json({ error: 'Orbis bridge authorization failed.' });
       }
       // Backwards-compatible: plain launch packages are still accepted. New Orbis
-      // deployments may wrap the package with an authorization-free raw V2 save.
+      // deployments may wrap the package with an authorization-free compatible raw V3 save.
       const parsed = request.body && typeof request.body === 'object' && 'package' in request.body
         ? launchDepositSchema.parse(request.body)
         : launchDepositSchema.parse({ package: request.body });
@@ -119,17 +119,17 @@ export function createV3Router(options: { production?: boolean } = {}) {
 
   router.get('/launch/:code', (request, response) => {
     const deposit = deposits.get(String(request.params.code));
-    if (!deposit) return response.status(404).json({ error: 'V2 package is missing, expired, or already claimed. Launch again from Orbis.' });
+    if (!deposit) return response.status(404).json({ error: 'V3 package is missing, expired, or already claimed. Launch again from Orbis.' });
     deposits.delete(String(request.params.code));
     const value: V3LaunchPackage = deposit.package;
     const session: V3Authorization = {
-      version: 2, launchId: value.launchId, generationGrant: value.generationGrant, model: value.model,
+      version: 3, launchId: value.launchId, generationGrant: value.generationGrant, model: value.model,
       source: { id: value.primaryAsset.id, type: value.primaryAsset.type, revision: value.primaryAsset.revision },
       worldId: packagedWorldId(value),
       expiresAt: value.expiresAt,
     };
     const lifetime = Math.max(1, Math.floor((value.expiresAt - Date.now()) / 1000));
-    response.setHeader('Set-Cookie', `${cookieName(value.launchId)}=${seal(session)}; HttpOnly; SameSite=Strict; Path=/api/v2; Max-Age=${lifetime}${options.production ? '; Secure' : ''}`);
+    response.setHeader('Set-Cookie', `${cookieName(value.launchId)}=${seal(session)}; HttpOnly; SameSite=Strict; Path=/api/v3; Max-Age=${lifetime}${options.production ? '; Secure' : ''}`);
     response.json({ package: publicV3Package(value), ...(deposit.resumeSave ? { resumeSave: deposit.resumeSave } : {}) });
   });
 
