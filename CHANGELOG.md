@@ -4,6 +4,8 @@ Speculus uses a human-readable release version plus a 7-character Git build id s
 
 ## Unreleased: isolated V2 foundation
 
+- Remove the V1/V2/V3 engine switcher from V3 Setup; V3 is already its own runtime and keeps its Experimental identity in the masthead instead.
+
 - Restyle the V3 terminal, controls, diagnostics and detached reader with the darker slate/cyan Comms palette while preserving the terminal-first layout and roleplay text colors.
 
 - Add review-only V3 state reconciliation for conservative canonical inventory suggestions derived from committed replies.
