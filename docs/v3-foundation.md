@@ -2,13 +2,14 @@
 
 V3 begins as the working V2 runtime, copied into an isolated client runtime so new architecture can be removed, replaced, or added without destabilizing V2.
 
-## Bootstrap rules
+## Runtime rules
 
-- V2 remains the stable fallback.
-- V3 is built directly from the V2 client baseline rather than rewritten from nothing.
-- V3-specific systems may remove or replace inherited V2 systems as the experiment develops.
-- V3 may temporarily reuse the V2 launch and generation authorization contract while its client runtime is isolated.
-- V2 and V3 browser session/autosave data must not overwrite each other.
+- V3 is the primary Speculus runtime.
+- V1 and V2 are frozen legacy runtimes and are not fallback development branches.
+- V3 began from the V2 client baseline, but new work is V3-only unless a legacy change is explicitly requested.
+- V3 owns an independent `/api/v3` launch, generation, research, cookie, and browser route boundary.
+- V1, V2 and V3 browser session/autosave data must never overwrite each other.
+- Paired V2/V3 commits are prohibited by default; similarity inherited from the original fork is not a reason to keep the runtimes synchronized.
 
 ## Protocol isolation
 
@@ -18,7 +19,7 @@ V3 must not expose internal prompt scaffolding in the visible roleplay transcrip
 
 The first major V3-only subsystem after the bootstrap is the editable World Brain. It should define world-wide simulation and narrative behavior while character/persona records remain data interpreted through that world brain. A maintained standard brain will be the fallback for worlds that do not provide a custom brain.
 
-V3-only settings belong in the V3 settings experience. V2 settings and stored values must remain intact so the user can always return to the stable engine.
+V3-only settings belong in the V3 settings experience. Legacy V1/V2 stored values remain intact for recovery, but they are no longer part of the normal product path.
 
 
 ## Contribution toward Fabula
