@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { parseV2ClientPackage, type V2ClientPackage } from '../contracts/launch';
+import { parseV3ClientPackage, type V3ClientPackage } from '../contracts/launch';
 import { V2BrowserProvider } from '../providers/browser';
 import { generateV2Turn, V2DraftRejected, type EnginePhase } from '../runtime/engine';
 import { generateV2PersonaDraft } from '../runtime/persona-draft';
@@ -20,13 +20,13 @@ const PENDING_IMPORT_KEY = 'speculus.pending-import.v3.experimental';
 
 type PendingSaveIdentity = ReturnType<typeof inspectV2Session>;
 
-let claim: { code: string; promise: Promise<V2ClientPackage> } | null = null;
+let claim: { code: string; promise: Promise<V3ClientPackage> } | null = null;
 function claimPackage(code: string) {
   if (claim?.code === code) return claim.promise;
-  const promise = fetch(`/api/v2/launch/${encodeURIComponent(code)}`, { credentials: 'same-origin', cache: 'no-store' }).then(async (response) => {
+  const promise = fetch(`/api/v3/launch/${encodeURIComponent(code)}`, { credentials: 'same-origin', cache: 'no-store' }).then(async (response) => {
     const body = await response.json() as { package?: unknown; error?: string };
     if (!response.ok) throw new Error(body.error || 'V3 launch could not be claimed.');
-    return parseV2ClientPackage(body.package);
+    return parseV3ClientPackage(body.package);
   });
   claim = { code, promise };
   return promise;
