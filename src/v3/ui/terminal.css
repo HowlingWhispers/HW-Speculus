@@ -381,7 +381,7 @@ body:has(.spec-v2) { margin: 0; background: #070a0f; }
 
 .v2-tool-popover button:hover:not(:disabled) {
   border-color: var(--v2-teal);
-  background: #254438;
+  background: rgba(117, 217, 223, .09);
   color: var(--v2-ink);
 }
 
