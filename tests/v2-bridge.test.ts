@@ -32,7 +32,7 @@ describe('separate V1/V2 bridge authorization', () => {
   it('keeps deposits, one-time claims, URLs and HTTP-only cookies separate', async () => {
     env(); const base = await listen(createApp());
     const one = await deposit(base, 1); const two = await deposit(base, 2);
-    expect(new URL(one.url).pathname).toBe('/'); expect(new URL(two.url).pathname).toBe('/v2');
+    expect(new URL(one.url).pathname).toBe('/v1'); expect(new URL(two.url).pathname).toBe('/v2');
     expect((await fetch(`${base}/api/launch/${two.code}`)).status).toBe(404);
     expect((await fetch(`${base}/api/v2/launch/${one.code}`)).status).toBe(404);
     const v1 = await fetch(`${base}/api/launch/${one.code}`);
