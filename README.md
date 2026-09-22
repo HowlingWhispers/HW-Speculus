@@ -53,11 +53,11 @@ npm run dev:api
 npm run dev
 ```
 
-Open `http://localhost:5175`. Without a launch package, the terminal correctly halts with `BOOT FAILURE: SIMULATION PACKAGE NOT FOUND`.
+Open `http://localhost:5175`. Without a launch package, V3 opens its recovery/boot surface and remains unable to generate until a fresh Orbis launch is supplied.
 
 ## Orbis launch exchange
 
-Orbis sends a server-to-server `POST /api/launch` with:
+Orbis sends a server-to-server `POST /api/v3/launch` with:
 
 ```http
 Authorization: Bearer <SPECULUS_BRIDGE_SECRET>
