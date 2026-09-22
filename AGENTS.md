@@ -1,8 +1,8 @@
 # Speculus repository rules
 
 - Work on `main`. Temporary feature branches are non-authoritative until merged into `main`.
-- Keep V2 as the stable baseline. V3 is the experimental runtime built directly from V2; replace or remove V2-derived pieces inside V3 as needed without silently changing V2 behavior.
-- V3 may temporarily reuse the V2 launch/generation authorization contract while its client runtime is isolated. Keep V2 and V3 browser session/autosave stores separate.
+- V3 is the current/main Speculus runtime. V1 and V2 are frozen legacy runtimes. Do not mirror V3 features, UI changes, refactors, or fixes into V1/V2 unless the user explicitly asks for a legacy change.
+- V3 may temporarily reuse the V2 launch/generation authorization contract, but that compatibility bridge is not permission to keep V2 and V3 development synchronized. Keep V2 and V3 browser session/autosave stores separate.
 - V3 must never expose internal turn/protocol markers such as `[PLAYER TURN]`, `[END PLAYER TURN]`, `[IN-WORLD RESPONSE]`, or similar transport scaffolding in player-visible transcript text.
 - Keep Speculus standalone. Never add runtime imports from HW-Orbis, HW-Library, or the historical HowlingWhispers application.
 - Keep React UI, simulator orchestration, pure runtime logic, storage, and provider transports separated.

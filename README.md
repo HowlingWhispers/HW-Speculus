@@ -6,13 +6,15 @@ The user selects a character, world, place, item, faction, or other record in Or
 
 A direct visit without an active package deliberately produces a 1982-style missing-system-medium error.
 
-## Experimental V2
+## Runtime versions
 
-`/v2` is a separately loaded research terminal and runtime foundation. V1 at `/`
-keeps its existing behavior. Select V2 in Orbis Account settings and use Simulate
-to receive a V2 launch. State, authorization cookies and raw export formats remain
-separate. See [V2 foundation and rollout](docs/v2-foundation.md) for implemented
-features, explicit limitations and the matching Orbis migration.
+V3 is the current Speculus runtime and owns the normal root route `/` as well as
+`/v3`. V1 and V2 are frozen legacy runtimes kept available at `/v1` and `/v2`
+for deliberate recovery/comparison only.
+
+New development goes to V3 only unless a legacy change is explicitly requested.
+The existing V2/V3 launch compatibility bridge remains temporary infrastructure,
+not a reason to mirror features between the runtimes.
 
 ## Security boundary
 
