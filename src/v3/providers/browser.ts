@@ -1,11 +1,11 @@
 import type { ProviderAdapter, ProviderRequest, ProviderResult } from '../../runtime/providers/types';
 
-export class V2BrowserProvider implements ProviderAdapter {
+export class V3BrowserProvider implements ProviderAdapter {
   readonly kind = 'orbis' as const;
   constructor(private readonly launchId: string) {}
 
   async generate(request: ProviderRequest): Promise<ProviderResult> {
-    const response = await fetch('/api/v2/generate', {
+    const response = await fetch('/api/v3/generate', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...request, signal: undefined, provider: 'orbis', launchId: this.launchId }), signal: request.signal,
     });
@@ -16,10 +16,13 @@ export class V2BrowserProvider implements ProviderAdapter {
       body = value as typeof body;
     } catch {
       if (request.signal?.aborted) throw new DOMException('Generation cancelled.', 'AbortError');
-      throw new Error(`V2 generation gateway returned an unreadable response (HTTP ${response.status}). Check the Speculus API and reverse proxy.`);
+      throw new Error(`V3 generation gateway returned an unreadable response (HTTP ${response.status}). Check the Speculus API and reverse proxy.`);
     }
-    if (!response.ok) throw new Error(typeof body.error === 'string' && body.error ? body.error : `V2 generation failed (HTTP ${response.status}).`);
-    if (typeof body.text !== 'string' || !body.metadata) throw new Error('The V2 bridge returned an invalid response.');
+    if (!response.ok) throw new Error(typeof body.error === 'string' && body.error ? body.error : `V3 generation failed (HTTP ${response.status}).`);
+    if (typeof body.text !== 'string' || !body.metadata) throw new Error('The V3 bridge returned an invalid response.');
     return { text: body.text, metadata: body.metadata };
   }
 }
+
+// Transitional alias for inherited V3 runtime imports.
+export { V3BrowserProvider as V2BrowserProvider };
