@@ -16,7 +16,7 @@ export const v3LaunchSchema = z.object({
   }
 });
 
-const legacyV3LaunchSchema = z.object({
+export const legacyV3LaunchSchema = z.object({
   ...orbisLaunchPackageSchema.shape,
   version: z.literal(2),
   engine: z.literal('v2'),
@@ -30,6 +30,7 @@ const legacyV3LaunchSchema = z.object({
 });
 
 export type V3LaunchPackage = z.infer<typeof v3LaunchSchema>;
+export type LegacyV3LaunchPackage = z.infer<typeof legacyV3LaunchSchema>;
 export type V3ClientPackage = Omit<V3LaunchPackage, 'generationGrant'>;
 
 const currentStoredPackageSchema = z.object(v3LaunchSchema.shape).omit({ generationGrant: true });
@@ -62,5 +63,8 @@ export const v2LaunchSchema = v3LaunchSchema;
 export type V2LaunchPackage = V3LaunchPackage;
 export type V2ClientPackage = V3ClientPackage;
 export const v2StoredPackageSchema = v3StoredPackageSchema;
-export const publicV2Package = publicV3Package;
+export function publicV2Package(value: V3LaunchPackage | LegacyV3LaunchPackage): V3ClientPackage {
+  const { generationGrant: _grant, ...safe } = value;
+  return { ...safe, version: 3, engine: 'v3' };
+}
 export const parseV2ClientPackage = parseV3ClientPackage;
