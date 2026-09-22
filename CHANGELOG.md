@@ -4,6 +4,9 @@ Speculus uses a human-readable release version plus a 7-character Git build id s
 
 ## Unreleased: isolated V2 foundation
 
+- Make V3 the normal root runtime; keep V1 at `/v1` and V2 at `/v2` as frozen legacy versions.
+- Stop treating V2 and V3 as paired development targets. New work is V3-only unless a legacy fix is explicitly requested.
+
 - Remove the V1/V2/V3 engine switcher from V3 Setup; V3 is already its own runtime and keeps its Experimental identity in the masthead instead.
 
 - Restyle the V3 terminal, controls, diagnostics and detached reader with the darker slate/cyan Comms palette while preserving the terminal-first layout and roleplay text colors.
