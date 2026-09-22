@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { V2ClientPackage } from '../contracts/launch';
+import type { V3ClientPackage } from '../contracts/launch';
 import type { RelationshipState } from '../../runtime/relationships/schema';
 import { removeRelationshipTurns } from '../../runtime/relationships/core';
 import { applyWorldAction, createWorld, worldSchema, type WorldAction } from './world';
@@ -25,7 +25,8 @@ const generationSettingsSchema = settingsSchema.pick({
   output: true, maxTokens: true, temperature: true, topK: true, topP: true,
   presencePenalty: true, frequencyPenalty: true, stopSequences: true, continueToEndOfSentence: true,
 });
-export type V2Settings = z.infer<typeof settingsSchema>;
+export type V3Settings = z.infer<typeof settingsSchema>;
+export type V2Settings = V3Settings;
 export const diagnosticsSchema = z.object({
   prompt: z.string().max(500_000), estimatedInputTokens: z.number(), outputBudget: z.number(),
   included: z.array(z.string()), omitted: z.array(z.string()),
@@ -43,7 +44,8 @@ export const diagnosticsSchema = z.object({
   finishReason: z.string().optional(), requestedMaxTokens: z.number().optional(), providerInputTokensEstimate: z.number().optional(),
   generationSettings: generationSettingsSchema.optional(),
 });
-export type V2Diagnostics = z.infer<typeof diagnosticsSchema>;
+export type V3Diagnostics = z.infer<typeof diagnosticsSchema>;
+export type V2Diagnostics = V3Diagnostics;
 const relationshipDimensionsSchema = z.object({
   trust: z.number().finite().default(0),
   affection: z.number().finite().default(0),
@@ -94,28 +96,34 @@ export const turnSchema = z.object({
   id: z.string().min(1), player: z.string().min(1).max(16000), reply: z.string().min(1).max(64000),
   createdAt: z.number(), worldRevision: z.number().int(), diagnostics: diagnosticsSchema,
 });
-export type V2Turn = z.infer<typeof turnSchema>;
+export type V3Turn = z.infer<typeof turnSchema>;
+export type V2Turn = V3Turn;
 export const eventSchema = z.object({
   id: z.string().min(1), kind: z.enum(['operator', 'turn']), label: z.string().max(200),
   worldRevision: z.number().int(), at: z.number(), world: worldSchema.optional(),
   ownerTurnId: z.string().min(1).max(300).nullable().default(null),
 });
-export type V2Session = {
-  version: 2; engine: 'v2'; id: string; launch: V2ClientPackage;
-  world: z.infer<typeof worldSchema>; settings: V2Settings; draft: string;
-  turns: V2Turn[]; events: z.infer<typeof eventSchema>[]; nextTurn: number;
+export type V3Session = {
+  version: 3; engine: 'v3'; id: string; launch: V3ClientPackage;
+  world: z.infer<typeof worldSchema>; settings: V3Settings; draft: string;
+  turns: V3Turn[]; events: z.infer<typeof eventSchema>[]; nextTurn: number;
   relationships: RelationshipState;
   stateProposals: V3StateProposal[];
 };
 
-export function createV2Session(launch: V2ClientPackage): V2Session {
+export type V2Session = V3Session;
+
+export function createV3Session(launch: V3ClientPackage): V3Session {
   return {
-    version: 2, engine: 'v2', id: crypto.randomUUID(), launch,
+    version: 3, engine: 'v3', id: crypto.randomUUID(), launch,
     world: createWorld(launch), settings: settingsSchema.parse({}), draft: '', turns: [], events: [], nextTurn: 1,
     relationships: normalizeRelationshipState(launch.relationshipState),
     stateProposals: [],
   };
 }
+
+// Transitional alias for inherited V3 code. New code should use createV3Session.
+export const createV2Session = createV3Session;
 
 export function operateWorld(session: V2Session, action: WorldAction, now = Date.now(), ownerTurnId: string | null = null): V2Session {
   const world = applyWorldAction(session.world, action, session.launch);
