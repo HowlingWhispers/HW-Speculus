@@ -1,8 +1,8 @@
 .spec-v2 .v2-detached-note {
   margin: 0 18px 4px;
   padding: 10px 12px;
-  border: 1px solid #416f60;
-  background: #102019;
+  border: 1px solid var(--v2-line-strong);
+  background: var(--v2-surface);
   display: flex;
   align-items: baseline;
   justify-content: space-between;

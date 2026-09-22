@@ -4,6 +4,8 @@ Speculus uses a human-readable release version plus a 7-character Git build id s
 
 ## Unreleased: isolated V2 foundation
 
+- Restyle the V3 terminal, controls, diagnostics and detached reader with the darker slate/cyan Comms palette while preserving the terminal-first layout and roleplay text colors.
+
 - Add review-only V3 state reconciliation for conservative canonical inventory suggestions derived from committed replies.
 - Add explicit Accept/Reject controls; generated prose still cannot directly mutate authoritative inventory.
 - Persist pending state proposals in raw saves and expose them in Diagnostics.
