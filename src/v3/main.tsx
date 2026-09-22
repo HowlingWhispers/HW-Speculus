@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { V2App } from './ui/App';
+import { V3App } from './ui/App';
 import { V2DetachedTranscript } from './ui/DetachedTranscript';
 import './ui/terminal.css';
 import './ui/roleplay-colors.css';
@@ -11,6 +11,6 @@ const displaySessionId = new URLSearchParams(window.location.search).get('displa
 createRoot(document.getElementById('root')!).render(
   <StrictMode>{displaySessionId
     ? <V2DetachedTranscript sessionId={displaySessionId} />
-    : <V2App />}
+    : <V3App />}
   </StrictMode>,
 );
