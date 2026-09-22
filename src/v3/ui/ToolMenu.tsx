@@ -24,29 +24,34 @@ export function ToolMenu({ label, children }: { label: string; children: ReactNo
     const margin = 8;
     const gap = 6;
     const triggerRect = trigger.getBoundingClientRect();
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const maxWidth = Math.max(160, Math.min(280, viewportWidth - margin * 2));
+    const visualViewport = window.visualViewport;
+    const viewportLeft = visualViewport?.offsetLeft ?? 0;
+    const viewportTop = visualViewport?.offsetTop ?? 0;
+    const viewportWidth = visualViewport?.width ?? document.documentElement.clientWidth;
+    const viewportHeight = visualViewport?.height ?? document.documentElement.clientHeight;
+    const viewportRight = viewportLeft + viewportWidth;
+    const viewportBottom = viewportTop + viewportHeight;
+    const maxWidth = Math.max(0, Math.min(280, viewportWidth - margin * 2));
+    const maxHeight = Math.max(0, viewportHeight - margin * 2);
 
     panel.style.maxWidth = `${maxWidth}px`;
-    panel.style.maxHeight = `${Math.max(120, viewportHeight - margin * 2)}px`;
+    panel.style.maxHeight = `${maxHeight}px`;
 
     requestAnimationFrame(() => {
       const panelRect = panel.getBoundingClientRect();
       const panelWidth = Math.min(panelRect.width || 190, maxWidth);
-      const panelHeight = Math.min(panelRect.height || 220, viewportHeight - margin * 2);
-      const left = Math.min(
-        Math.max(margin, triggerRect.left),
-        Math.max(margin, viewportWidth - panelWidth - margin),
-      );
+      const panelHeight = Math.min(panelRect.height || 220, maxHeight);
+      const minLeft = viewportLeft + margin;
+      const maxLeft = Math.max(minLeft, viewportRight - panelWidth - margin);
+      const left = Math.min(Math.max(minLeft, triggerRect.left), maxLeft);
+      const minTop = viewportTop + margin;
+      const maxTop = Math.max(minTop, viewportBottom - panelHeight - margin);
       const above = triggerRect.top - panelHeight - gap;
       const below = triggerRect.bottom + gap;
-      const top = above >= margin
-        ? above
-        : Math.min(below, Math.max(margin, viewportHeight - panelHeight - margin));
+      const top = above >= minTop ? above : Math.min(Math.max(minTop, below), maxTop);
 
       panel.style.left = `${Math.round(left)}px`;
-      panel.style.top = `${Math.round(Math.max(margin, top))}px`;
+      panel.style.top = `${Math.round(top)}px`;
     });
   };
 
