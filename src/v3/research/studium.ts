@@ -4,7 +4,7 @@ export async function submitLatestTurnToStudium(session: V2Session, options: { r
   const turn = session.turns.at(-1);
   if (!turn) return;
 
-  const response = await fetch('/api/v2/research', {
+  const response = await fetch('/api/v3/research', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
@@ -31,7 +31,7 @@ export async function retractLatestTurnFromStudium(session: V2Session): Promise<
   const turn = session.turns.at(-1);
   if (!turn) return;
 
-  const response = await fetch('/api/v2/research/retract', {
+  const response = await fetch('/api/v3/research/retract', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
