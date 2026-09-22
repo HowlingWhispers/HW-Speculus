@@ -16,7 +16,8 @@ import { SettingsPanel } from './SettingsPanel';
 import { V2Transcript } from './Transcript';
 
 const PIPELINE_STEPS = ['resolve', 'context', 'generate', 'validate', 'commit'] as const;
-const PENDING_IMPORT_KEY = 'speculus.pending-import.v3.experimental';
+const PENDING_IMPORT_KEY = 'speculus.pending-import.v3';
+const LEGACY_PENDING_IMPORT_KEY = 'speculus.pending-import.v3.experimental';
 
 type PendingSaveIdentity = ReturnType<typeof inspectV3Session>;
 
@@ -77,7 +78,7 @@ export function V3App() {
       try {
         let next = code ? createV3Session(await claimPackage(code)) : loadV3Session();
         if (code && next) {
-          let pending = sessionStorage.getItem(PENDING_IMPORT_KEY);
+          let pending = sessionStorage.getItem(PENDING_IMPORT_KEY) ?? sessionStorage.getItem(LEGACY_PENDING_IMPORT_KEY);
           if (!pending) {
             const latest = loadLatestV3LocalAutosave();
             const source = latest?.identity;
@@ -90,6 +91,7 @@ export function V3App() {
             try {
               next = importV3Session(pending, next);
               sessionStorage.removeItem(PENDING_IMPORT_KEY);
+              sessionStorage.removeItem(LEGACY_PENDING_IMPORT_KEY);
             } catch (cause) {
               setError(`The staged save was not loaded: ${messageOf(cause)}`);
             }
@@ -277,6 +279,7 @@ export function V3App() {
     detachedWindow.current?.close();
     detachedWindow.current = null;
     sessionStorage.removeItem(PENDING_IMPORT_KEY);
+    sessionStorage.removeItem(LEGACY_PENDING_IMPORT_KEY);
     setTranscriptDetached(false);
     setReaderMode('inline');
     setRejected(null);
