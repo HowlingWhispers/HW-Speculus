@@ -59,10 +59,9 @@ export function ToolMenu({ label, children }: { label: string; children: ReactNo
   };
 
   const toggle = () => {
-    const panel = panelRef.current;
-    if (!panel) return;
-
-    if (nativePopover && panel.showPopover && panel.hidePopover) {
+    if (nativePopover) {
+      const panel = panelRef.current;
+      if (!panel?.showPopover || !panel.hidePopover) return;
       if (panel.matches(':popover-open')) {
         panel.hidePopover();
       } else {
@@ -72,11 +71,9 @@ export function ToolMenu({ label, children }: { label: string; children: ReactNo
       return;
     }
 
-    setFallbackOpen((open) => {
-      const next = !open;
-      if (next) requestAnimationFrame(position);
-      return next;
-    });
+    // The fallback panel does not exist until fallbackOpen becomes true.
+    // Never require panelRef.current before opening it.
+    setFallbackOpen((open) => !open);
   };
 
   useEffect(() => {
@@ -91,6 +88,7 @@ export function ToolMenu({ label, children }: { label: string; children: ReactNo
       }
     };
 
+    if (!nativePopover && fallbackOpen) requestAnimationFrame(position);
     window.addEventListener('resize', reposition);
     window.addEventListener('scroll', reposition, true);
     return () => {
