@@ -1,19 +1,46 @@
 import { z } from 'zod';
-import { v2StoredPackageSchema, type V2ClientPackage } from '../contracts/launch';
+import { v3StoredPackageSchema, type V3ClientPackage } from '../contracts/launch';
 import { eventSchema, relationshipStateSchema, sessionStateProposalsSchema, settingsSchema, turnSchema, type V2Session } from '../runtime/session';
 import { assertWorldCanon, assetsFor, createWorld, worldSchema } from '../runtime/world';
 
-export const V2_STORAGE_KEY = 'speculus.session.v3.experimental';
-// V3 bootstrap intentionally keeps the V2 raw transfer schema so switching back remains safe.
-export const V2_EXPORT_FORMAT = 'speculus-v2-session';
-export const MAX_V2_FILE_BYTES = 16 * 1024 * 1024;
-const stateSchema = z.object({
-  version: z.literal(2), engine: z.literal('v2'), world: worldSchema,
-  settings: settingsSchema, draft: z.string().max(16000), turns: z.array(turnSchema).max(20000),
-  events: z.array(eventSchema).max(40000), nextTurn: z.number().int().positive(),
+export const V3_STORAGE_KEY = 'speculus.session.v3';
+export const V3_LEGACY_STORAGE_KEY = 'speculus.session.v3.experimental';
+export const V3_EXPORT_FORMAT = 'speculus-v3-session';
+export const V3_LEGACY_EXPORT_FORMAT = 'speculus-v2-session';
+export const MAX_V3_FILE_BYTES = 16 * 1024 * 1024;
+
+export const V2_STORAGE_KEY = V3_STORAGE_KEY;
+export const V2_EXPORT_FORMAT = V3_EXPORT_FORMAT;
+export const MAX_V2_FILE_BYTES = MAX_V3_FILE_BYTES;
+
+const stateFields = {
+  world: worldSchema,
+  settings: settingsSchema,
+  draft: z.string().max(16000),
+  turns: z.array(turnSchema).max(20000),
+  events: z.array(eventSchema).max(40000),
+  nextTurn: z.number().int().positive(),
   relationships: relationshipStateSchema,
   stateProposals: sessionStateProposalsSchema,
+};
+
+const currentStateSchema = z.object({
+  version: z.literal(3),
+  engine: z.literal('v3'),
+  ...stateFields,
 });
+
+const legacyStateSchema = z.object({
+  version: z.literal(2),
+  engine: z.literal('v2'),
+  ...stateFields,
+});
+
+const stateSchema = z.union([currentStateSchema, legacyStateSchema]).transform((value) => ({
+  ...value,
+  version: 3 as const,
+  engine: 'v3' as const,
+}));
 const identitySchema = z.object({ id: z.string(), revision: z.string(), name: z.string() });
 const sourceSchema = z.object({
   id: z.string(), type: z.string(), revision: z.string(), name: z.string().optional(),
@@ -25,9 +52,16 @@ const sourceSchema = z.object({
   elapsedSeconds: z.number().int().nonnegative().optional(),
   simulationDay: z.number().int().positive().optional(),
 });
-const transferSchema = stateSchema.extend({ format: z.literal(V2_EXPORT_FORMAT), source: sourceSchema });
+const currentTransferSchema = currentStateSchema.extend({ format: z.literal(V3_EXPORT_FORMAT), source: sourceSchema });
+const legacyTransferSchema = legacyStateSchema.extend({ format: z.literal(V3_LEGACY_EXPORT_FORMAT), source: sourceSchema });
+const transferSchema = z.union([currentTransferSchema, legacyTransferSchema]).transform((value) => ({
+  ...value,
+  format: V3_EXPORT_FORMAT,
+  version: 3 as const,
+  engine: 'v3' as const,
+}));
 
-function validateState(state: z.infer<typeof stateSchema>, launch: V2ClientPackage) {
+function validateState(state: z.infer<typeof stateSchema>, launch: V3ClientPackage) {
   assertWorldCanon(state.world, launch);
   const ids = new Set(state.turns.map((turn) => turn.id));
   const turnsById = new Map(state.turns.map((turn) => [turn.id, turn]));
@@ -78,7 +112,7 @@ export function v2ExportFilename(session: V2Session, now = new Date()) {
 }
 
 export function exportV2Session(session: V2Session, now = Date.now()): string {
-  const state = stateSchema.parse(session);
+  const state = currentStateSchema.parse(session);
   validateState(state, session.launch);
   const { id, revision, type, name } = session.launch.primaryAsset;
   const records = assetsFor(session.launch);
@@ -102,16 +136,16 @@ export function exportV2Session(session: V2Session, now = Date.now()): string {
 }
 
 export function inspectV2Session(raw: string) {
-  if (new Blob([raw]).size > MAX_V2_FILE_BYTES) throw new Error('The V3 experimental file exceeds 16 MB.');
+  if (new Blob([raw]).size > MAX_V3_FILE_BYTES) throw new Error('The V3 file exceeds 16 MB.');
   const parsed = transferSchema.safeParse(JSON.parse(raw));
-  if (!parsed.success) throw new Error('This is not a supported V2-compatible export. V1 files must stay in V1.');
+  if (!parsed.success) throw new Error('This is not a supported V3 export. Legacy V3-compatible saves remain accepted.');
   return parsed.data.source;
 }
 
 export function importV2Session(raw: string, current: V2Session): V2Session {
   if (new Blob([raw]).size > MAX_V2_FILE_BYTES) throw new Error('The V3 experimental file exceeds 16 MB.');
   const parsed = transferSchema.safeParse(JSON.parse(raw));
-  if (!parsed.success) throw new Error('This is not a supported V2-compatible export. V1 files must stay in V1.');
+  if (!parsed.success) throw new Error('This is not a supported V3 export. Legacy V3-compatible saves remain accepted.');
   const value = parsed.data;
   const source = current.launch.primaryAsset;
   if (value.source.id !== source.id || value.source.type !== source.type || value.source.revision !== source.revision) {
@@ -123,16 +157,16 @@ export function importV2Session(raw: string, current: V2Session): V2Session {
 }
 
 export function saveV2Session(session: V2Session, storage: Pick<Storage, 'setItem'> = sessionStorage): void {
-  const state = stateSchema.parse(session);
-  const launch = v2StoredPackageSchema.parse(session.launch);
-  storage.setItem(V2_STORAGE_KEY, JSON.stringify({ ...state, id: session.id, launch }));
+  const state = currentStateSchema.parse(session);
+  const launch = v3StoredPackageSchema.parse(session.launch);
+  storage.setItem(V3_STORAGE_KEY, JSON.stringify({ ...state, id: session.id, launch }));
 }
 
 export function loadV2Session(storage: Pick<Storage, 'getItem'> = sessionStorage): V2Session | null {
-  const raw = storage.getItem(V2_STORAGE_KEY);
+  const raw = storage.getItem(V3_STORAGE_KEY) ?? storage.getItem(V3_LEGACY_STORAGE_KEY);
   if (!raw) return null;
   const value = JSON.parse(raw) as Record<string, unknown>;
-  const launch = v2StoredPackageSchema.parse(value.launch);
+  const launch = v3StoredPackageSchema.parse(value.launch);
   const state = stateSchema.parse(value);
   validateState(state, launch);
   return { ...state, launch, id: z.string().min(1).max(200).parse(value.id) };
