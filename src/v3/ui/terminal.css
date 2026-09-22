@@ -330,10 +330,14 @@ body:has(.spec-v2) { margin: 0; background: #101715; }
 .v2-tool-popover {
   position: fixed;
   z-index: 2147483647;
+  inset: auto;
   margin: 0;
-  min-width: 170px;
+  box-sizing: border-box;
+  min-width: min(170px, calc(100vw - 16px));
   width: max-content;
   max-width: calc(100vw - 16px);
+  max-width: calc(100dvw - 16px);
+  max-height: calc(100vh - 16px);
   max-height: calc(100dvh - 16px);
   display: none;
   overflow: auto;
@@ -352,8 +356,15 @@ body:has(.spec-v2) { margin: 0; background: #101715; }
   display: grid;
 }
 
+.v2-tool-popover *,
+.v2-tool-popover *::before,
+.v2-tool-popover *::after {
+  box-sizing: border-box;
+}
+
 .v2-tool-popover button {
   width: 100%;
+  min-width: 0;
   min-height: 32px;
   padding: 6px 9px;
   border: 1px solid #49695e;
@@ -361,6 +372,7 @@ body:has(.spec-v2) { margin: 0; background: #101715; }
   background: #14231e;
   color: #a9c7ba;
   text-align: left;
+  overflow-wrap: anywhere;
   font: inherit;
   font-size: 10px;
   cursor: pointer;
