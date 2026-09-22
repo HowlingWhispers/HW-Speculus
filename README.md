@@ -4,15 +4,22 @@ Speculus is the Orbis-launched character and roleplay simulator for The Howling 
 
 The user selects a character, world, place, item, faction, or other record in Orbis and clicks **Simulate**. Orbis boxes the selected record, its connected context, the active persona, relationship state, and a temporary generation grant into a versioned launch package. Speculus claims that package once and boots directly into the simulation.
 
-A direct visit without an active package deliberately produces a 1982-style missing-system-medium error.
+A direct visit without an active package deliberately opens the V3 recovery/boot surface and cannot generate until Orbis supplies fresh authorization.
 
-## Experimental V2
+## Runtime status
 
-`/v2` is a separately loaded research terminal and runtime foundation. V1 at `/`
-keeps its existing behavior. Select V2 in Orbis Account settings and use Simulate
-to receive a V2 launch. State, authorization cookies and raw export formats remain
-separate. See [V2 foundation and rollout](docs/v2-foundation.md) for implemented
-features, explicit limitations and the matching Orbis migration.
+Speculus V3 is the primary runtime and owns the default `/` route. It has its own
+`/api/v3` launch, generation, and research bridge.
+
+V1 and V2 are frozen legacy runtimes retained only for old-session recovery and
+comparison:
+
+- `/v1` — legacy V1
+- `/v2` — frozen V2
+- `/` and `/v3` — current V3
+
+V3 work must not be mirrored into V1 or V2 automatically. Legacy runtimes receive
+changes only when an explicit legacy fix is requested.
 
 ## Security boundary
 
@@ -57,7 +64,7 @@ Authorization: Bearer <SPECULUS_BRIDGE_SECRET>
 Content-Type: application/json
 ```
 
-The version 1 package contains the primary asset, related records, optional character card, active persona, scene, context blocks, relationship state, selected model, expiry, and an opaque generation grant. The response contains a one-time `launchUrl` that Orbis opens for the user.
+The current V3 package contains the primary asset, related records, optional character card, active persona, scene, context blocks, relationship state, selected model, expiry, and an opaque generation grant. Orbis deposits it at `/api/v3/launch`; the response contains a one-time root `launchUrl` that Orbis opens for the user.
 
 The browser claims that package once. Speculus removes the launch code from the address bar, creates an HTTP-only generation session, and stores only the non-secret simulation state in tab-scoped `sessionStorage`.
 
@@ -77,7 +84,7 @@ STUDIUM_BRIDGE_SECRET=<shared Studium ingestion secret>
 
 `SPECULUS_BRIDGE_SECRET` authorizes Orbis to deposit launch packages. It is not a NovelAI token. `ORBIS_GENERATION_API_URL` must point to the internal shared generation gateway.
 
-When `STUDIUM_API_URL` and `STUDIUM_BRIDGE_SECRET` are configured, committed V2 turns are handed to Studium through the Speculus server. The browser never receives the Studium secret. Research delivery is non-blocking: a Studium outage must not prevent a roleplay turn from committing. The research bundle contains bounded committed player/reply text and small world metadata, but not compiled prompts, diagnostics, provider credentials, generation grants, or hidden Orbis context.
+When `STUDIUM_API_URL` and `STUDIUM_BRIDGE_SECRET` are configured, committed V3 turns are handed to Studium through the Speculus server. The browser never receives the Studium secret. Research delivery is non-blocking: a Studium outage must not prevent a roleplay turn from committing. The research bundle contains bounded committed player/reply text and small world metadata, but not compiled prompts, diagnostics, provider credentials, generation grants, or hidden Orbis context.
 
 ## Commands
 
