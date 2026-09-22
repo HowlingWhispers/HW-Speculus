@@ -1,12 +1,14 @@
 # Speculus repository rules
 
 - Work on `main`. Temporary feature branches are non-authoritative until merged into `main`.
-- Keep V2 as the stable baseline. V3 is the experimental runtime built directly from V2; replace or remove V2-derived pieces inside V3 as needed without silently changing V2 behavior.
-- V3 may temporarily reuse the V2 launch/generation authorization contract while its client runtime is isolated. Keep V2 and V3 browser session/autosave stores separate.
+- V3 is the primary Speculus runtime and owns the default `/` route plus the `/api/v3` bridge.
+- V1 and V2 are frozen legacy runtimes at `/v1` and `/v2`. Do not mirror V3 features, UI changes, refactors, or fixes into V1/V2 unless the user explicitly asks for a legacy fix.
+- Do not make paired V2/V3 commits by default. A change to one runtime is not permission to change another runtime.
+- V3 must not call `/api/v2` or depend on V2 browser/session authorization. Keep every runtime's browser session/autosave store and server authorization cookie isolated.
 - V3 must never expose internal turn/protocol markers such as `[PLAYER TURN]`, `[END PLAYER TURN]`, `[IN-WORLD RESPONSE]`, or similar transport scaffolding in player-visible transcript text.
 - Keep Speculus standalone. Never add runtime imports from HW-Orbis, HW-Library, or the historical HowlingWhispers application.
 - Keep React UI, simulator orchestration, pure runtime logic, storage, and provider transports separated.
-- Normal production sessions arrive through a one-time Orbis launch package. The standalone root may inspect and stage a raw V2 save for recovery, but it must never generate until a matching fresh Orbis launch authorization has been issued.
+- Normal production sessions arrive through a one-time Orbis launch package. The V3 root may inspect and stage a compatible raw save for recovery, but it must never generate until a matching fresh Orbis launch authorization has been issued.
 - Raw save files must remain authorization-free: never export launch IDs, grants, expiry tokens, cookies, or provider credentials. Canon/source identity and revisions are safe to export for compatibility checks.
 - Provider adapters receive compiled prompts, never mutable session state.
 - NovelAI credentials belong to the user's Orbis settings. Never request, receive, display, log, or persist the raw provider token in Speculus.
