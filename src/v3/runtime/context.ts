@@ -33,10 +33,16 @@ function skippedTurnText(turn: V2Turn, session: V2Session, compact = false) {
   return compact ? `(skipped as ${actorName})` : `(turn skipped by operator; continue as ${actorName})`;
 }
 
+function replySubjectName(turn: V2Turn, session: V2Session, fallback: string) {
+  const actorId = skippedPersonaActorId(turn.player);
+  return actorId ? session.world.actors.find((actor) => actor.id === actorId)?.name ?? actorId : fallback;
+}
+
 function recentExchange(turn: V2Turn, session: V2Session, playerName: string, subjectName: string) {
+  const replySubject = replySubjectName(turn, session, subjectName);
   return isSkippedPersonaTurn(turn.player)
-    ? `Player ${playerName}: ${skippedTurnText(turn, session)}\n${subjectName}:\n${turn.reply}`
-    : `Player ${playerName}:\n${turn.player}\n${subjectName}:\n${turn.reply}`;
+    ? `Player ${playerName}: ${skippedTurnText(turn, session)}\n${replySubject}:\n${turn.reply}`
+    : `Player ${playerName}:\n${turn.player}\n${replySubject}:\n${turn.reply}`;
 }
 
 function chronicleExchange(turn: V2Turn, session: V2Session, playerName: string, subjectName: string) {
@@ -44,17 +50,19 @@ function chronicleExchange(turn: V2Turn, session: V2Session, playerName: string,
     ? skippedTurnText(turn, session)
     : clipChronicleText(turn.player, 240);
   const reply = clipChronicleText(turn.reply, 620);
+  const replySubject = replySubjectName(turn, session, subjectName);
   return [
     `Turn ${turn.id} / world r${turn.worldRevision}`,
     `${playerName}: ${player}`,
-    `${subjectName}: ${reply}`,
+    `${replySubject}: ${reply}`,
   ].join('\n');
 }
 
 function archiveLine(turn: V2Turn, session: V2Session, playerName: string, subjectName: string) {
   const player = isSkippedPersonaTurn(turn.player) ? skippedTurnText(turn, session, true) : clipChronicleText(turn.player, 90);
   const reply = clipChronicleText(turn.reply, 180);
-  return `${turn.id} | ${playerName}: ${player} | ${subjectName}: ${reply}`;
+  const replySubject = replySubjectName(turn, session, subjectName);
+  return `${turn.id} | ${playerName}: ${player} | ${replySubject}: ${reply}`;
 }
 
 function historyBlocks(session: V2Session): { blocks: V3ContextBlock[]; omitted: string[] } {
