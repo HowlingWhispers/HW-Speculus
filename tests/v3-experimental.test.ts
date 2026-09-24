@@ -3,6 +3,7 @@ import { publicV2Package } from '../src/v3/contracts/launch';
 import { compileV2Context } from '../src/v3/runtime/context';
 import { generateV2Turn, stripV3ProtocolArtifacts } from '../src/v3/runtime/engine';
 import { createV2Session, deleteLastTurn } from '../src/v3/runtime/session';
+import { skippedPersonaActorId } from '../src/v3/runtime/turn-control';
 import { MockProvider } from '../src/runtime/providers/mock';
 import { getRelationship } from '../src/runtime/relationships/core';
 import { exportV2Session, importV2Session } from '../src/v3/storage/session';
@@ -29,6 +30,37 @@ class ProtocolEchoProvider extends MockProvider {
 }
 
 describe('V3 experimental protocol isolation', () => {
+  it('identifies packaged family NPCs and can advance exactly one selected NPC with Skip as', async () => {
+    const launch = publicV2Package(v2Package({
+      primaryAsset: { id: 'family:holt', type: 'other', revision: 'rev-1', name: 'Holt family', summary: 'The Holt household.', data: {} },
+      character: null,
+      initialLocationId: 'place:workshop',
+      relatedAssets: [
+        { id: 'place:workshop', type: 'place', revision: 'rev-1', name: 'Workshop', summary: 'A quiet workshop.', data: {} },
+        { id: 'character:ragna', type: 'character', revision: 'rev-1', name: 'Ragna Holt', summary: 'Mother of the Holt family.', data: { role: 'mother' } },
+        { id: 'character:pip', type: 'character', revision: 'rev-1', name: 'Pip Holt', summary: 'Daughter in the Holt family.', data: { role: 'daughter' } },
+      ],
+    }));
+    const value = createV2Session(launch);
+    expect(value.world.actors.filter((actor) => actor.role === 'character').map((actor) => actor.name)).toEqual(['Ragna Holt', 'Pip Holt']);
+
+    class RagnaProvider extends MockProvider {
+      override async generate(request: ProviderRequest) {
+        const result = await super.generate(request);
+        return { ...result, text: '*Ragna rests one hand on the table.* "Tell me what happened."' };
+      }
+    }
+
+    const next = await generateV2Turn(value, new RagnaProvider(), { skipAsActorId: 'character:ragna' });
+    const turn = next.turns.at(-1)!;
+    expect(skippedPersonaActorId(turn.player)).toBe('character:ragna');
+    expect(turn.diagnostics.prompt).toContain('selected Ragna Holt as the next acting NPC');
+    expect(turn.diagnostics.prompt).toContain('Write only Ragna Holt\'s next immediate meaningful beat');
+    expect(turn.diagnostics.prompt).toContain('do not complete a full back-and-forth exchange');
+    expect(turn.diagnostics.subjectActorId).toBe('character:ragna');
+    expect(next.draft).toBe('');
+  });
+
   it('sanitizes legacy protocol echoes before committing a visible reply', async () => {
     const value = { ...createV2Session(publicV2Package(v2Package())), draft: '*I look around.*' };
     const next = await generateV2Turn(value, new ProtocolEchoProvider());

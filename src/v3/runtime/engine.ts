@@ -4,7 +4,7 @@ import { heuristicRelationshipScorer } from '../../runtime/relationships/evaluat
 import { compileV2Context } from './context';
 import { resolveV2PlayerTurn } from './resolution';
 import { rollbackTurnOwnedActions, settingsSchema, type V2Diagnostics, type V2Session, type V2Turn } from './session';
-import { SKIPPED_PERSONA_TURN } from './turn-control';
+import { SKIPPED_PERSONA_TURN, isSkippedPersonaTurn, skippedPersonaActorId, skippedPersonaTurnAs } from './turn-control';
 import { deriveStateProposals } from './state-review';
 
 export type EnginePhase = 'resolve' | 'context' | 'generate' | 'validate' | 'commit';
@@ -91,7 +91,7 @@ export function validateV2Reply(text: string, playerName = '') {
 }
 
 export async function generateV2Turn(session: V2Session, provider: ProviderAdapter, options: {
-  reroll?: boolean; skipPersona?: boolean; signal?: AbortSignal; onPhase?: (phase: EnginePhase) => void; now?: number;
+  reroll?: boolean; skipPersona?: boolean; skipAsActorId?: string; signal?: AbortSignal; onPhase?: (phase: EnginePhase) => void; now?: number;
 } = {}): Promise<V2Session> {
   const settings = settingsSchema.parse(session.settings);
   if (options.signal?.aborted) throw new Error('Generation cancelled. No provider call was made.');
@@ -102,8 +102,15 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   if (options.reroll && (!last || last.worldRevision !== workingSession.world.revision)) {
     throw new Error('Reroll requires the latest turn and its unchanged world state.');
   }
-  const skipPersona = options.reroll ? last!.player === SKIPPED_PERSONA_TURN : options.skipPersona === true;
-  const player = skipPersona ? SKIPPED_PERSONA_TURN : (options.reroll ? last!.player : workingSession.draft).trim();
+  const requestedSkipActorId = options.skipAsActorId?.trim() || null;
+  const skipAsActorId = options.reroll ? skippedPersonaActorId(last?.player ?? '') : requestedSkipActorId;
+  const skipPersona = options.reroll ? isSkippedPersonaTurn(last?.player ?? '') : options.skipPersona === true || skipAsActorId !== null;
+  if (skipAsActorId && !workingSession.world.actors.some((actor) => actor.id === skipAsActorId && actor.role === 'character')) {
+    throw new Error('Skip as requires a packaged NPC actor.');
+  }
+  const player = skipPersona
+    ? skipAsActorId ? skippedPersonaTurnAs(skipAsActorId) : SKIPPED_PERSONA_TURN
+    : (options.reroll ? last!.player : workingSession.draft).trim();
   if (!skipPersona && (!player || player.length > 16000)) throw new Error('Write a player turn between 1 and 16000 characters.');
   const characterPrimary = Boolean(workingSession.launch.character && workingSession.launch.primaryAsset.type === 'character');
   const relationshipBase = options.reroll && characterPrimary
@@ -146,7 +153,14 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   }
   const warnings = ['Semantic canon claim validation is not complete. Generated prose remains downstream of and non-authoritative over physical state.'];
   if (resolved.resolution.deferredClaims.length) warnings.push(...resolved.resolution.deferredClaims);
-  if (skipPersona) warnings.push('The player persona turn was explicitly skipped. The renderer was forbidden from inventing a player action or decision.');
+  if (skipPersona) {
+    const skippedActorName = skipAsActorId
+      ? workingSession.world.actors.find((actor) => actor.id === skipAsActorId)?.name ?? skipAsActorId
+      : null;
+    warnings.push(skippedActorName
+      ? `The player persona turn was explicitly skipped as ${skippedActorName}. The renderer was limited to that NPC's immediate beat and forbidden from inventing a player action or decision.`
+      : 'The player persona turn was explicitly skipped. The renderer was forbidden from inventing a player action or decision.');
+  }
   if (options.reroll) warnings.push('Reroll reused the already-resolved world state. Elapsed time and narrative dice were not rolled or committed twice.');
   if (decodedReply !== rawReply) warnings.push('Serialized roleplay escape sequences were decoded before commit.');
   if (sanitizedReply !== decodedReply) warnings.push('Legacy Speculus turn/control markers were stripped before commit.');
@@ -184,7 +198,7 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
     issues, warnings, model: workingSession.launch.model, durationMs: result.metadata.durationMs,
     completionStatus: result.metadata.completionStatus ?? 'unknown', worldRevision: resolvedSession.world.revision,
     viewpointActorId: resolved.resolution.playerActorId,
-    subjectActorId: resolved.resolution.subjectActorId,
+    subjectActorId: skipAsActorId ?? resolved.resolution.subjectActorId,
     resolutionStatus: resolved.resolution.status,
     resolutionDeferredClaims: [...resolved.resolution.deferredClaims],
     resolutionElapsedSeconds: resolved.resolution.elapsedSeconds,
@@ -221,7 +235,22 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
     relationships,
     stateProposals,
     events: options.reroll
-      ? workingSession.events.map((event) => event.id === id ? { ...event, label: skipPersona ? 'Reply rerolled / persona skipped' : 'Reply rerolled', at } : event)
-      : [...resolvedSession.events, ...(resolutionEvent ? [resolutionEvent] : []), { id, kind: 'turn', label: skipPersona ? 'Reply committed / persona skipped' : 'Reply committed', worldRevision: resolvedSession.world.revision, at, ownerTurnId: null }],
+      ? workingSession.events.map((event) => event.id === id ? {
+        ...event,
+        label: skipAsActorId
+          ? `Reply rerolled / skipped as ${workingSession.world.actors.find((actor) => actor.id === skipAsActorId)?.name ?? skipAsActorId}`
+          : skipPersona ? 'Reply rerolled / persona skipped' : 'Reply rerolled',
+        at,
+      } : event)
+      : [...resolvedSession.events, ...(resolutionEvent ? [resolutionEvent] : []), {
+        id,
+        kind: 'turn',
+        label: skipAsActorId
+          ? `Reply committed / skipped as ${workingSession.world.actors.find((actor) => actor.id === skipAsActorId)?.name ?? skipAsActorId}`
+          : skipPersona ? 'Reply committed / persona skipped' : 'Reply committed',
+        worldRevision: resolvedSession.world.revision,
+        at,
+        ownerTurnId: null,
+      }],
   };
 }

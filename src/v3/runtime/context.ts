@@ -2,7 +2,7 @@ import { getRelationship } from '../../runtime/relationships/core';
 import type { V2Session, V2Turn } from './session';
 import type { V2TurnResolution } from './resolution';
 import { selectV3ContextBlocks, type V3ContextBlock } from './context-blocks';
-import { SKIPPED_PERSONA_TURN } from './turn-control';
+import { isSkippedPersonaTurn, skippedPersonaActorId } from './turn-control';
 import { assetsFor, perceptionFor, worldClock } from './world';
 
 export const CONTEXT_CHARACTER_BUDGET = 28_000;
@@ -26,15 +26,22 @@ function clipChronicleText(value: string, maxCharacters: number) {
   return `${compact.slice(0, head).trimEnd()} ... ${compact.slice(-tail).trimStart()}`;
 }
 
-function recentExchange(turn: V2Turn, playerName: string, subjectName: string) {
-  return turn.player === SKIPPED_PERSONA_TURN
-    ? `Player ${playerName}: (turn skipped by operator)\n${subjectName}:\n${turn.reply}`
+function skippedTurnText(turn: V2Turn, session: V2Session, compact = false) {
+  const actorId = skippedPersonaActorId(turn.player);
+  if (!actorId) return compact ? '(skipped)' : '(turn skipped by operator)';
+  const actorName = session.world.actors.find((actor) => actor.id === actorId)?.name ?? actorId;
+  return compact ? `(skipped as ${actorName})` : `(turn skipped by operator; continue as ${actorName})`;
+}
+
+function recentExchange(turn: V2Turn, session: V2Session, playerName: string, subjectName: string) {
+  return isSkippedPersonaTurn(turn.player)
+    ? `Player ${playerName}: ${skippedTurnText(turn, session)}\n${subjectName}:\n${turn.reply}`
     : `Player ${playerName}:\n${turn.player}\n${subjectName}:\n${turn.reply}`;
 }
 
-function chronicleExchange(turn: V2Turn, playerName: string, subjectName: string) {
-  const player = turn.player === SKIPPED_PERSONA_TURN
-    ? '(turn skipped by operator)'
+function chronicleExchange(turn: V2Turn, session: V2Session, playerName: string, subjectName: string) {
+  const player = isSkippedPersonaTurn(turn.player)
+    ? skippedTurnText(turn, session)
     : clipChronicleText(turn.player, 240);
   const reply = clipChronicleText(turn.reply, 620);
   return [
@@ -44,8 +51,8 @@ function chronicleExchange(turn: V2Turn, playerName: string, subjectName: string
   ].join('\n');
 }
 
-function archiveLine(turn: V2Turn, playerName: string, subjectName: string) {
-  const player = turn.player === SKIPPED_PERSONA_TURN ? '(skipped)' : clipChronicleText(turn.player, 90);
+function archiveLine(turn: V2Turn, session: V2Session, playerName: string, subjectName: string) {
+  const player = isSkippedPersonaTurn(turn.player) ? skippedTurnText(turn, session, true) : clipChronicleText(turn.player, 90);
   const reply = clipChronicleText(turn.reply, 180);
   return `${turn.id} | ${playerName}: ${player} | ${subjectName}: ${reply}`;
 }
@@ -72,7 +79,7 @@ function historyBlocks(session: V2Session): { blocks: V3ContextBlock[]; omitted:
     blocks.push({
       id: `recent:${turn.id}`,
       title: 'Recent exchange (context only, not engine authority)',
-      content: recentExchange(turn, playerName, subjectName),
+      content: recentExchange(turn, session, playerName, subjectName),
       priority: 90 + index,
     });
   }
@@ -82,7 +89,7 @@ function historyBlocks(session: V2Session): { blocks: V3ContextBlock[]; omitted:
     blocks.push({
       id: `chronicle:${turn.id}`,
       title: 'SESSION CHRONICLE / DERIVED FROM COMMITTED TURN',
-      content: chronicleExchange(turn, playerName, subjectName),
+      content: chronicleExchange(turn, session, playerName, subjectName),
       priority: 58 + index,
     });
   }
@@ -91,7 +98,7 @@ function historyBlocks(session: V2Session): { blocks: V3ContextBlock[]; omitted:
     blocks.push({
       id: 'chronicle:archive',
       title: 'SESSION ARCHIVE RECAP / LOW-PRIORITY DERIVED MEMORY',
-      content: archiveTurns.map((turn) => archiveLine(turn, playerName, subjectName)).join('\n'),
+      content: archiveTurns.map((turn) => archiveLine(turn, session, playerName, subjectName)).join('\n'),
       priority: 24,
     });
   }
@@ -229,11 +236,20 @@ export function compileV2Context(
   const outputEnvelope = v2OutputEnvelope(settings.maxTokens);
   const impersonatingPersona = mode === 'impersonate-persona';
   const skippingPersona = mode === 'skip-persona';
+  const skipAsActorId = skippingPersona ? skippedPersonaActorId(player) : null;
+  const skipAsActor = skipAsActorId
+    ? world.actors.find((actor) => actor.id === skipAsActorId && actor.role === 'character') ?? null
+    : null;
+  const skipAsAsset = skipAsActorId
+    ? assetsFor(launch).find((asset) => asset.id === skipAsActorId && asset.type === 'character') ?? null
+    : null;
   const playerPerception = resolution?.playerPerception ?? perceptionFor(world, launch.persona.id);
-  const subjectActorId = launch.character?.id ?? null;
+  const subjectActorId = skipAsActorId ?? launch.character?.id ?? null;
   const subjectPerception = impersonatingPersona
     ? playerPerception
-    : resolution?.subjectPerception ?? (subjectActorId ? perceptionFor(world, subjectActorId) : null);
+    : skipAsActorId
+      ? perceptionFor(world, skipAsActorId)
+      : resolution?.subjectPerception ?? (subjectActorId ? perceptionFor(world, subjectActorId) : null);
 
   const outputRules = [
     `The provider hard ceiling is ${outputEnvelope.hardLimitTokens} tokens. This is an emergency ceiling, never a target.`,
@@ -274,9 +290,15 @@ export function compileV2Context(
     'Use real roleplay punctuation and real line breaks. Do not serialize the response as JSON or escape its punctuation.',
     'Begin directly with an immediate player-observable action, reaction, dialogue or environmental consequence. Do not prefix it with a speaker name, role label, or response heading.',
     'Do not output engine status, rules, state patches, analysis, headings, menus or a request for the player to choose their next move.',
-    skippingPersona
-      ? 'The operator explicitly skipped the player persona turn. Continue from current resolved state and do not invent any player action, dialogue, thought, consent, decision or movement.'
-      : 'Player input describes an attempt or utterance. It is evidence for resolution, not permission for the renderer to rewrite canon or engine state.',
+    'One generation advances one immediate playable beat, not an entire scene. Do not compress a whole conversation, argument, meal, journey, conflict, or emotional arc into one response.',
+    'Do not close an active topic, summarize its aftermath, announce that tension has eased, or move everyone on to a new activity unless the player or authoritative engine state actually causes that transition.',
+    'When NPCs are talking to each other, do not complete a full back-and-forth exchange in one generation. Prefer one primary NPC action or utterance, with at most a brief immediate reaction from another NPC when coherence requires it, then stop.',
+    'Only redirect attention to the player when the player is directly addressed, must make an immediate decision, or the scene has naturally shifted focus to them. Never manufacture a question or everyone-looks-at-you moment merely to hand control back.',
+    skipAsActor
+      ? `The operator explicitly skipped the player persona turn and selected ${skipAsActor.name} as the next acting NPC. Write only ${skipAsActor.name}'s next immediate meaningful beat. Other NPCs may show a brief observable reaction if necessary, but do not give another NPC a full reply or complete the exchange. Do not invent any player action, dialogue, thought, consent, decision or movement.`
+      : skippingPersona
+        ? 'The operator explicitly skipped the player persona turn. Continue one immediate beat from current resolved state and do not invent any player action, dialogue, thought, consent, decision or movement.'
+        : 'Player input describes an attempt or utterance. It is evidence for resolution, not permission for the renderer to rewrite canon or engine state.',
     ...outputRules,
     launch.character
       ? `Authorized subject for behavior: ${launch.character.name}. Render only the outward result available to ${launch.persona.name}.`
@@ -315,7 +337,15 @@ export function compileV2Context(
       title: impersonatingPersona ? 'PLAYER PERSONA / AUTHORIZED SUBJECT' : 'AUTHORIZED SUBJECT / BEHAVIOR SOURCE',
       content: asText(impersonatingPersona
         ? launch.persona
-        : launch.character ?? { name: 'SIMULATION NARRATOR', description: launch.primaryAsset.summary }),
+        : skipAsActor
+          ? {
+            id: skipAsActor.id,
+            name: skipAsActor.name,
+            role: skipAsActor.role,
+            authoredAsset: skipAsAsset,
+            authoredDetails: launch.contextBlocks.find((value) => value.id === skipAsActor.id) ?? null,
+          }
+          : launch.character ?? { name: 'SIMULATION NARRATOR', description: launch.primaryAsset.summary }),
       priority: 100,
       required: true,
     },
@@ -407,7 +437,7 @@ export function compileV2Context(
 
   blocks.push(...relevantDomainBlocks(session));
 
-  const sceneIds = new Set([launch.primaryAsset.id, world.locationId, ...playerPerception.presentActors.map((actor) => actor.id)]);
+  const sceneIds = new Set([launch.primaryAsset.id, world.locationId, skipAsActorId, ...playerPerception.presentActors.map((actor) => actor.id)].filter((value): value is string => Boolean(value)));
   for (const asset of assetsFor(launch)) {
     if (!sceneIds.has(asset.id)) continue;
     if (impersonatingPersona && asset.type === 'character') continue;
@@ -449,9 +479,11 @@ export function compileV2Context(
         : 'PLAYER INPUT / ATTEMPT OR UTTERANCE / NOT STATE AUTHORITY',
     content: (impersonatingPersona
       ? `Draft only ${launch.persona.name}'s next player turn. Do not write the character or narrator.`
-      : skippingPersona
-        ? 'Player persona turn skipped. No player action, dialogue, thought or decision occurred in this turn.'
-        : player) + '\n\n[IN-WORLD RESPONSE]',
+      : skipAsActor
+        ? `Player persona turn skipped. Continue one beat as ${skipAsActor.name}. No player action, dialogue, thought or decision occurred in this turn.`
+        : skippingPersona
+          ? 'Player persona turn skipped. No player action, dialogue, thought or decision occurred in this turn.'
+          : player) + '\n\n[IN-WORLD RESPONSE]',
     priority: 100,
     required: true,
   });

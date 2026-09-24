@@ -162,13 +162,13 @@ export function V2App() {
     return () => window.clearInterval(timer);
   }, [transcriptDetached]);
 
-  const generate = async (reroll = false, skipPersona = false) => {
+  const generate = async (reroll = false, skipPersona = false, skipAsActorId?: string) => {
     if (!session || controller.current || importLock.current) return;
     const active = new AbortController();
     controller.current = active; setError(''); setRejected(null); setPhaseSeen([]);
     try {
       const next = await generateV2Turn(session, new V2BrowserProvider(session.launch.launchId), {
-        reroll, skipPersona, signal: active.signal, onPhase: notePhase,
+        reroll, skipPersona, skipAsActorId, signal: active.signal, onPhase: notePhase,
       });
       if (!active.signal.aborted) {
         setSession(next);
@@ -327,6 +327,7 @@ export function V2App() {
   };
 
   const expired = session ? session.launch.expiresAt <= Date.now() : false;
+  const skipAsActors = session?.world.actors.filter((actor) => actor.role === 'character') ?? [];
   return <main className={`spec-v2 ${session?.settings.crtEffects !== false ? 'v2-crt' : ''}`}>
     <header className="v2-masthead"><div><div className="v2-brand"><h1>SPECULUS</h1><span>V3</span><span className="v2-badge">Experimental / World Brain lab</span></div><p>Howling Whispers / Simulation lab</p></div>
       <div className="v2-connection"><span>{session ? 'ORBIS LINK' : 'SYSTEM MEDIUM'}</span><small>{session ? expired ? 'Authorization expired' : 'Package loaded' : 'Orbis launch or raw save'}</small>
@@ -344,8 +345,12 @@ export function V2App() {
         <div className="v2-transcript-tools">
           <button disabled={busy || !session.turns.length || expired || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => void generate(true)}>Reroll latest</button>
           <button disabled={busy || expired} onClick={() => void impersonate()}>Impersonate</button>
+          <ToolMenu label="Skip as">
+              {skipAsActors.map((actor) => <button key={actor.id} disabled={busy || expired} onClick={() => void generate(false, true, actor.id)}>{actor.name}</button>)}
+              <button disabled={busy || expired} onClick={() => void generate(false, true)}>Narrator / automatic</button>
+              {!skipAsActors.length && <button disabled>No NPCs identified</button>}
+          </ToolMenu>
           <ToolMenu label="Turn">
-              <button disabled={busy || expired} onClick={() => void generate(false, true)}>Skip persona turn</button>
               <button className="v2-delete" disabled={busy || !session.turns.length || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => {
                 if (window.confirm('Remove the latest player/reply pair and its resolved state from this V3 session?')) {
                   void retractLatestTurnFromStudium(session).catch(() => undefined);

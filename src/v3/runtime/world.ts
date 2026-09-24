@@ -105,11 +105,22 @@ function initialLocationFor(launch: V2ClientPackage) {
 
 export function createWorld(launch: V2ClientPackage): WorldState {
   const locationId = initialLocationFor(launch);
+  const packagedCharacters = [...new Map(
+    assetsFor(launch)
+      .filter((asset) => asset.type === 'character')
+      .map((asset) => [asset.id, asset] as const),
+  ).values()];
   return {
     revision: 0, elapsedSeconds: 0, simulationDay: 1, timeOfDaySeconds: DEFAULT_START_SECOND_OF_DAY, locationId,
     actors: [
       { id: launch.persona.id, name: launch.persona.name, role: 'player', locationId, knowledge: [] },
-      ...(launch.character ? [{ id: launch.character.id, name: launch.character.name, role: 'character' as const, locationId: null, knowledge: [] }] : []),
+      ...packagedCharacters.map((asset) => ({
+        id: asset.id,
+        name: asset.name,
+        role: 'character' as const,
+        locationId: null,
+        knowledge: [],
+      })),
     ],
     domains: emptyRuntimeDomains(),
   };
