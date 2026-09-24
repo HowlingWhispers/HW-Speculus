@@ -300,9 +300,11 @@ export function compileV2Context(
         ? 'The operator explicitly skipped the player persona turn. Continue one immediate beat from current resolved state and do not invent any player action, dialogue, thought, consent, decision or movement.'
         : 'Player input describes an attempt or utterance. It is evidence for resolution, not permission for the renderer to rewrite canon or engine state.',
     ...outputRules,
-    launch.character
-      ? `Authorized subject for behavior: ${launch.character.name}. Render only the outward result available to ${launch.persona.name}.`
-      : `You are the simulation narrator. Render only what ${launch.persona.name} can perceive or already knows.`,
+    skipAsActor
+      ? `Authorized subject for this turn: ${skipAsActor.name}. Render only ${skipAsActor.name}'s next immediate beat and only its outward result available to ${launch.persona.name}.`
+      : launch.character
+        ? `Authorized subject for behavior: ${launch.character.name}. Render only the outward result available to ${launch.persona.name}.`
+        : `You are the simulation narrator. Render only what ${launch.persona.name} can perceive or already knows.`,
   ].join('\n');
 
   const blocks: V3ContextBlock[] = [
@@ -441,7 +443,8 @@ export function compileV2Context(
   for (const asset of assetsFor(launch)) {
     if (!sceneIds.has(asset.id)) continue;
     if (impersonatingPersona && asset.type === 'character') continue;
-    if (!impersonatingPersona && asset.type === 'character' && launch.character && asset.id !== launch.character.id) continue;
+    if (!impersonatingPersona && asset.type === 'character' && launch.character
+      && asset.id !== launch.character.id && asset.id !== skipAsActorId) continue;
 
     blocks.push({
       id: `asset:${asset.id}`,
