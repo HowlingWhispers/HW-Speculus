@@ -27,6 +27,30 @@ const sourceSchema = z.object({
 });
 const transferSchema = stateSchema.extend({ format: z.literal(V2_EXPORT_FORMAT), source: sourceSchema });
 
+function reconcileWorldActors(world: z.infer<typeof worldSchema>, launch: V2ClientPackage) {
+  const expected = createWorld(launch).actors;
+  const savedById = new Map(world.actors.map((actor) => [actor.id, actor]));
+  return {
+    ...world,
+    actors: expected.map((actor) => {
+      const saved = savedById.get(actor.id);
+      return saved
+        ? { ...actor, locationId: saved.locationId, knowledge: saved.knowledge }
+        : actor;
+    }),
+  };
+}
+
+function reconcileImportedStateActors(state: z.infer<typeof stateSchema>, launch: V2ClientPackage) {
+  return {
+    ...state,
+    world: reconcileWorldActors(state.world, launch),
+    events: state.events.map((event) => event.kind === 'operator' && event.world
+      ? { ...event, world: reconcileWorldActors(event.world, launch) }
+      : event),
+  };
+}
+
 function validateState(state: z.infer<typeof stateSchema>, launch: V2ClientPackage) {
   assertWorldCanon(state.world, launch);
   const ids = new Set(state.turns.map((turn) => turn.id));
@@ -117,8 +141,9 @@ export function importV2Session(raw: string, current: V2Session): V2Session {
   if (value.source.id !== source.id || value.source.type !== source.type || value.source.revision !== source.revision) {
     throw new Error('Import requires the same Orbis record and canonical revision. No session was changed.');
   }
-  validateState(value, current.launch);
-  const { format: _format, source: _source, ...state } = value;
+  const { format: _format, source: _source, ...rawState } = value;
+  const state = reconcileImportedStateActors(rawState, current.launch);
+  validateState(state, current.launch);
   return { ...current, ...state };
 }
 
