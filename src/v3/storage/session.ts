@@ -30,12 +30,15 @@ const transferSchema = stateSchema.extend({ format: z.literal(V2_EXPORT_FORMAT),
 function reconcileWorldActors(world: z.infer<typeof worldSchema>, launch: V2ClientPackage) {
   const expected = createWorld(launch).actors;
   const savedById = new Map(world.actors.map((actor) => [actor.id, actor]));
+  const packagedPlaces = new Set(assetsFor(launch).filter((asset) => asset.type === 'place').map((asset) => asset.id));
+  const validLocation = (locationId: string | null) => locationId && packagedPlaces.has(locationId) ? locationId : null;
   return {
     ...world,
+    locationId: validLocation(world.locationId),
     actors: expected.map((actor) => {
       const saved = savedById.get(actor.id);
       return saved
-        ? { ...actor, locationId: saved.locationId, knowledge: saved.knowledge }
+        ? { ...actor, locationId: validLocation(saved.locationId), knowledge: saved.knowledge }
         : actor;
     }),
   };
