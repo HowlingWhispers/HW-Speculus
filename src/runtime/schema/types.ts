@@ -18,6 +18,7 @@ export type Persona = {
   id: string;
   name: string;
   description: string;
+  document: Record<string, unknown>;
 };
 
 export type TranscriptMessage = {

@@ -19,6 +19,7 @@ const characterSchema = z.object({
 
 const personaSchema = z.object({
   kind: z.literal('persona'), id: z.string().min(1), name: z.string().min(1), description: z.string(),
+  document: z.record(z.string(), z.unknown()).default({}),
 });
 
 const catalogSchema = z.object({

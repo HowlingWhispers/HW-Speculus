@@ -36,13 +36,30 @@ function launchPackage(overrides: Record<string, unknown> = {}) {
 
 describe('Orbis launch package', () => {
   it('validates a versioned package and redacts the generation grant for the browser', () => {
-    const parsed = parseOrbisLaunchPackage(launchPackage());
+    const parsed = parseOrbisLaunchPackage(launchPackage({
+      persona: {
+        ...persona,
+        document: {
+          identity: { displayName: 'Skyler', pronouns: 'they/them' },
+          personality: 'Careful and curious.',
+        },
+      },
+    }));
     const safe = clientLaunchPackage(parsed);
     expect(safe.primaryAsset.revision).toBe('rev-7');
     expect(safe.catalog?.code).toBe('SPC-C-KD41827');
     expect(safe.catalog?.registryNumber).toBe(27);
+    expect(safe.persona.document).toEqual({
+      identity: { displayName: 'Skyler', pronouns: 'they/them' },
+      personality: 'Careful and curious.',
+    });
     expect(safe).not.toHaveProperty('generationGrant');
     expect(JSON.stringify(safe)).not.toContain('opaque-generation-grant');
+  });
+
+  it('keeps older launch packages compatible by defaulting Persona core data', () => {
+    const parsed = parseOrbisLaunchPackage(launchPackage());
+    expect(parsed.persona.document).toEqual({});
   });
 
   it('rejects expired and mismatched packages', () => {

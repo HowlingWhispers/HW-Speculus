@@ -64,7 +64,7 @@ export function importPersona(input: string | unknown): Persona {
   const parsed = personaSchema.safeParse(value);
   if (!parsed.success) throw new Error(`Persona import failed: ${parsed.error.issues[0]?.message ?? 'invalid persona data.'}`);
   const description = parsed.data.description ?? parsed.data.persona ?? parsed.data.details ?? '';
-  return { kind: 'persona', id: parsed.data.id ?? `persona:${stableSlug(parsed.data.name)}`, name: parsed.data.name, description };
+  return { kind: 'persona', id: parsed.data.id ?? `persona:${stableSlug(parsed.data.name)}`, name: parsed.data.name, description, document: {} };
 }
 
 export function createTemporaryPersona(name: string, description: string): Persona {
