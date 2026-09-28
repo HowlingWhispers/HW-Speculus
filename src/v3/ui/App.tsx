@@ -10,6 +10,7 @@ import { loadLatestV2LocalAutosave, saveV2LocalAutosave } from '../storage/autos
 import { exportV2Session, importV2Session, inspectV2Session, loadV2Session, MAX_V2_FILE_BYTES, saveV2Session, v2ExportFilename } from '../storage/session';
 import { detachedTranscriptChannelName, type DetachedTranscriptMessage } from './detached-channel';
 import { openFloatingReader, openSideReader, supportsFloatingReader } from './reader-window';
+import { usePhoneLayout } from './usePhoneLayout';
 import { ToolMenu } from './ToolMenu';
 import { V2DiagnosticsPanel } from './Diagnostics';
 import { SettingsPanel } from './SettingsPanel';
@@ -45,6 +46,8 @@ export function V2App() {
   const importLock = useRef(false);
   const [importRevision, setImportRevision] = useState(0);
   const [rejected, setRejected] = useState<V2Diagnostics | null>(null);
+  const isPhone = usePhoneLayout();
+  const [phoneTab, setPhoneTab] = useState<'main' | 'setup' | 'diagnostics'>('main');
   const [showSettings, setShowSettings] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [transcriptDetached, setTranscriptDetached] = useState(false);
@@ -328,14 +331,24 @@ export function V2App() {
 
   const expired = session ? session.launch.expiresAt <= Date.now() : false;
   const skipAsActors = session?.world.actors.filter((actor) => actor.role === 'character') ?? [];
-  return <main className={`spec-v2 ${session?.settings.crtEffects !== false ? 'v2-crt' : ''}`}>
+  return <main className={`spec-v2 ${isPhone && session ? 'v3-phone' : ''} ${session?.settings.crtEffects !== false ? 'v2-crt' : ''}`}>
     <header className="v2-masthead"><div><div className="v2-brand"><h1>SPECULUS</h1><span>V3</span><span className="v2-badge">Experimental / World Brain lab</span></div><p>Howling Whispers / Simulation lab</p></div>
       <div className="v2-connection"><span>{session ? 'ORBIS LINK' : 'SYSTEM MEDIUM'}</span><small>{session ? expired ? 'Authorization expired' : 'Package loaded' : 'Orbis launch or raw save'}</small>
-        {session && <nav aria-label="Panel visibility"><button type="button" aria-pressed={showSettings} onClick={() => setShowSettings(!showSettings)}>Setup</button><button type="button" aria-pressed={showDiagnostics} onClick={() => setShowDiagnostics(!showDiagnostics)}>Diagnostics</button></nav>}
+        {session && !isPhone && <nav aria-label="Panel visibility"><button type="button" aria-pressed={showSettings} onClick={() => setShowSettings(!showSettings)}>Setup</button><button type="button" aria-pressed={showDiagnostics} onClick={() => setShowDiagnostics(!showDiagnostics)}>Diagnostics</button></nav>}
       </div>
     </header>
-    {session ? <div className={`v2-layout ${showSettings ? '' : 'v2-hide-settings'} ${showDiagnostics ? '' : 'v2-hide-diagnostics'}`}>
-      {showSettings && <SettingsPanel key={`${session.id}:${importRevision}`} session={session} disabled={busy} onSettings={(patch) => setSession({ ...session, settings: { ...session.settings, ...patch } })} onWorld={(action) => {
+    {session && isPhone && <nav className="v3-phone-tabs" aria-label="Simulation screens">
+      {(['main', 'setup', 'diagnostics'] as const).map((tab) => <button key={tab} type="button" aria-pressed={phoneTab === tab} onClick={() => setPhoneTab(tab)}>{tab === 'main' ? 'Main' : tab === 'setup' ? 'Setup' : 'Diagnostics'}</button>)}
+      <button type="button" disabled={busy} onClick={() => {
+        try {
+          saveV2Session(session);
+          saveV2LocalAutosave(session);
+          window.location.assign(`https://lib.thehowlingwhispers.com/asset/${encodeURIComponent(session.launch.primaryAsset.id)}`);
+        } catch { setPhoneTab('main'); setStorageError('Could not save before leaving. Return to Main and export your session first.'); }
+      }}>Back to Orbis</button>
+    </nav>}
+    {session ? <div data-phone-tab={phoneTab} className={`v2-layout ${showSettings ? '' : 'v2-hide-settings'} ${showDiagnostics ? '' : 'v2-hide-diagnostics'}`}>
+      {(isPhone || showSettings) && <SettingsPanel key={`${session.id}:${importRevision}`} session={session} disabled={busy} onSettings={(patch) => setSession({ ...session, settings: { ...session.settings, ...patch } })} onWorld={(action) => {
         try { setSession(operateWorld(session, action)); setError(''); }
         catch (cause) { setError(messageOf(cause)); }
       }} />}
@@ -393,15 +406,15 @@ export function V2App() {
         {(error || storageError || expired) && <div className="v2-fault" role="alert">{storageError || error || 'Authorization expired. Export this session, launch the same record from Orbis, then import the V3 export.'}</div>}
         <form className="v2-composer" onSubmit={(event) => { event.preventDefault(); void generate(); }}>
           <textarea aria-label="Your next turn" placeholder="What do you do next?" value={session.draft} maxLength={16000} disabled={busy} onChange={(event) => setSession({ ...session, draft: event.target.value })} onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+            if (!isPhone && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
               if (!busy && session.draft.trim() && !expired) void generate();
             }
           }} />
-          <div><small>Enter to send · Shift+Enter for newline{transcriptDetached ? ' / detached reader live' : ''}</small>{busy ? <button type="button" onClick={() => controller.current?.abort()}>Cancel</button> : <button className="v2-send" disabled={!session.draft.trim() || expired}>Send</button>}</div>
+          <div><small>{isPhone ? 'Enter for newline · Tap Send to send' : 'Enter to send · Shift+Enter for newline'}{transcriptDetached ? ' / detached reader live' : ''}</small>{busy ? <button type="button" onClick={() => controller.current?.abort()}>Cancel</button> : <button className="v2-send" disabled={!session.draft.trim() || expired}>Send</button>}</div>
         </form>
       </section>
-      {showDiagnostics && <V2DiagnosticsPanel session={session} rejected={rejected} />}
+      {(isPhone || showDiagnostics) && <V2DiagnosticsPanel session={session} rejected={rejected} />}
     </div> : <section className="v2-panel v2-boot">
       <span className="v2-eyebrow">V3 / BOOT SEQUENCE</span>
       <h2>{booting ? 'Reading simulation medium...' : pendingSave ? 'Save identified' : 'Open a simulation or load a save'}</h2>

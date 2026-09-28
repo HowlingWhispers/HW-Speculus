@@ -490,3 +490,33 @@ body:has(.spec-v2) { margin: 0; background: #070a0f; }
     max-width: calc(100vw - 8px);
   }
 }
+
+/* Phone-only shell; desktop styles and panel toggles remain unchanged. */
+.spec-v2.v3-phone {
+  height: 100dvh; min-height: 0; overflow: hidden;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  padding-bottom: max(5px, env(safe-area-inset-bottom));
+}
+.spec-v2.v3-phone .v2-masthead { min-height: 0; padding: 8px 12px; }
+.spec-v2.v3-phone .v2-masthead p,
+.spec-v2.v3-phone .v2-badge,
+.spec-v2.v3-phone .v2-connection { display: none; }
+.spec-v2.v3-phone .v2-brand h1 { font-size: 20px; }
+.spec-v2.v3-phone .v3-phone-tabs { display: flex; flex-wrap: wrap; gap: 5px; }
+.spec-v2.v3-phone .v3-phone-tabs button { flex: 1 1 auto; min-height: 44px; padding: 6px; font-size: 12px; }
+.spec-v2.v3-phone .v2-layout { display: flex; min-height: 0; overflow: hidden; }
+.spec-v2.v3-phone .v2-layout > .v2-panel { flex: 1; min-height: 0; height: 100%; overflow: auto; }
+.spec-v2.v3-phone .v2-layout[data-phone-tab='main'] > .v2-settings,
+.spec-v2.v3-phone .v2-layout[data-phone-tab='main'] > .v2-diagnostics,
+.spec-v2.v3-phone .v2-layout[data-phone-tab='setup'] > .v2-simulation,
+.spec-v2.v3-phone .v2-layout[data-phone-tab='setup'] > .v2-diagnostics,
+.spec-v2.v3-phone .v2-layout[data-phone-tab='diagnostics'] > .v2-simulation,
+.spec-v2.v3-phone .v2-layout[data-phone-tab='diagnostics'] > .v2-settings { display: none; }
+.spec-v2.v3-phone .v2-panel-heading { padding: 8px 12px; }
+.spec-v2.v3-phone .v2-transcript { flex: 1 1 auto; min-height: 70px; }
+.spec-v2.v3-phone .v2-composer { flex-shrink: 0; }
+.spec-v2.v3-phone .v2-composer textarea { font-size: 16px; min-height: 70px; max-height: 25dvh; }
+.spec-v2.v3-phone button { min-height: 44px; }
+.spec-v2.v3-phone .v2-transcript-tools { gap: 5px; padding: 5px 8px; }
+.spec-v2.v3-phone .v2-status { padding: 2px 6px; }
+.spec-v2.v3-phone .v2-status > div { display: none; }

@@ -2,6 +2,12 @@
 
 Speculus uses a human-readable release version plus a 7-character Git build id shown in the terminal, for example `v0.2.0+5890c7b`.
 
+## 0.4.2 — 2026-09-28
+
+- Add phone-only Main, Setup and Diagnostics screens with touch-sized controls and a Back to Orbis button that saves before leaving.
+- Phone Enter inserts a newline; the dedicated Send button submits the turn.
+- Preserve desktop panel controls, layout and Enter/Shift+Enter behavior. V1 and V2 remain unchanged.
+
 ## Unreleased: isolated V2 foundation
 
 - Make V3 the normal root runtime; keep V1 at `/v1` and V2 at `/v2` as frozen legacy versions.
