@@ -12,6 +12,7 @@ Speculus uses a human-readable release version plus a 7-character Git build id s
 
 - Tighten V3 roleplay output formatting with an explicit action/dialogue example so action/environment narration stays inside single asterisks and spoken dialogue stays inside double quotes.
 - Detect structurally ambiguous V3 output and make one formatting-only repair pass. The repair is accepted only when the underlying prose content is unchanged; otherwise the draft is discarded instead of committing misleading italics/dialogue styling.
+- Fix the nested-dialogue detector so normal `*action* "dialogue" *action*` output is accepted without wasting a repair generation or discarding a valid reply; genuine dialogue inside an action span is still rejected.
 
 - Make V3 the normal root runtime; keep V1 at `/v1` and V2 at `/v2` as frozen legacy versions.
 - Stop treating V2 and V3 as paired development targets. New work is V3-only unless a legacy fix is explicitly requested.
