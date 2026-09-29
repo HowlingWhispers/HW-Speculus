@@ -29,6 +29,26 @@ describe('V3 roleplay formatting guard', () => {
     expect(v3RoleplayFormattingIssues(malformed)).toContain('bare prose outside roleplay delimiters');
   });
 
+  it('accepts normal alternating action and dialogue without a false nested-dialogue error', () => {
+    const valid = [
+      '*He nodded.* "Fine." *He left.*',
+      '*He nodded.* “Fine.” *He left.*',
+      '"Fine." *He nodded.* "Then we go."',
+      '*He nodded.*\n\n"Fine."\n\n*He left.*',
+    ];
+    for (const text of valid) {
+      expect(v3RoleplayFormattingIssues(text)).not.toContain('dialogue nested inside action italics');
+      expect(v3RoleplayFormattingIssues(text)).toEqual([]);
+    }
+  });
+
+  it('still detects straight and curly dialogue genuinely nested inside action italics', () => {
+    expect(v3RoleplayFormattingIssues('*He muttered "Fine" and left.*'))
+      .toContain('dialogue nested inside action italics');
+    expect(v3RoleplayFormattingIssues('*He muttered “Fine” and left.*'))
+      .toContain('dialogue nested inside action italics');
+  });
+
   it('adds the strict format contract and repairs a malformed completion without changing prose content', async () => {
     const malformed = '*The pony raised an eyebrow.* That is a good point. *He tapped a hoof.* So, are you here for the show?';
     const repaired = '*The pony raised an eyebrow.* "That is a good point." *He tapped a hoof.* "So, are you here for the show?"';
@@ -53,6 +73,17 @@ describe('V3 roleplay formatting guard', () => {
 
   it('does not spend a repair generation on already valid roleplay formatting', async () => {
     const valid = '*The pony raises an eyebrow.* "That is a good point."';
+    const upstream = vi.fn(async () => gatewayResponse(valid));
+    vi.stubGlobal('fetch', upstream);
+
+    const result = await new V2BrowserProvider('launch-fixture').generate(request);
+
+    expect(result.text).toBe(valid);
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not spend a repair generation on the common action-dialogue-action shape', async () => {
+    const valid = '*The pony raises an eyebrow.* "That is a good point." *He taps a hoof.* "So, are you here for the show?"';
     const upstream = vi.fn(async () => gatewayResponse(valid));
     vi.stubGlobal('fetch', upstream);
 
