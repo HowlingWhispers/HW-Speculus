@@ -15,8 +15,8 @@ const V3_ROLEPLAY_FORMAT_CONTRACT = [
   '"So, are you here for the show?"',
 ].join('\n');
 
-function gatewayBody(request: ProviderRequest, prompt: string) {
-  return JSON.stringify({ ...request, prompt, signal: undefined, provider: 'orbis' });
+function gatewayBody(request: ProviderRequest, prompt: string, launchId: string) {
+  return JSON.stringify({ ...request, prompt, signal: undefined, provider: 'orbis', launchId });
 }
 
 async function readGatewayResponse(response: Response, signal?: AbortSignal): Promise<ProviderResult> {
@@ -92,7 +92,7 @@ export class V2BrowserProvider implements ProviderAdapter {
   private async callGateway(request: ProviderRequest, prompt: string): Promise<ProviderResult> {
     const response = await fetch('/api/v2/generate', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-      body: gatewayBody({ ...request, signal: undefined }, prompt), signal: request.signal,
+      body: gatewayBody({ ...request, signal: undefined }, prompt, this.launchId), signal: request.signal,
     });
     return readGatewayResponse(response, request.signal);
   }
