@@ -15,6 +15,14 @@ const V3_ROLEPLAY_FORMAT_CONTRACT = [
   '"So, are you here for the show?"',
 ].join('\n');
 
+const RESPONSE_CUE = '\n\n[IN-WORLD RESPONSE]';
+
+function promptWithFormatContract(prompt: string) {
+  const cueIndex = prompt.lastIndexOf(RESPONSE_CUE);
+  if (cueIndex < 0) return `${prompt}\n\n${V3_ROLEPLAY_FORMAT_CONTRACT}`;
+  return `${prompt.slice(0, cueIndex)}\n\n${V3_ROLEPLAY_FORMAT_CONTRACT}${prompt.slice(cueIndex)}`;
+}
+
 function gatewayBody(request: ProviderRequest, prompt: string, launchId: string) {
   return JSON.stringify({ ...request, prompt, signal: undefined, provider: 'orbis', launchId });
 }
@@ -98,8 +106,7 @@ export class V2BrowserProvider implements ProviderAdapter {
   }
 
   async generate(request: ProviderRequest): Promise<ProviderResult> {
-    const prompt = `${request.prompt}\n\n${V3_ROLEPLAY_FORMAT_CONTRACT}`;
-    const result = await this.callGateway({ ...request, engine: 'v2' }, prompt);
+    const result = await this.callGateway(request, promptWithFormatContract(request.prompt));
     if (request.signal?.aborted) throw new DOMException('Generation cancelled.', 'AbortError');
     if (result.metadata.completionStatus === 'max_tokens') return result;
 
@@ -108,7 +115,6 @@ export class V2BrowserProvider implements ProviderAdapter {
 
     const repaired = await this.callGateway({
       ...request,
-      engine: 'v2',
       temperature: Math.min(request.temperature, 0.2),
       presencePenalty: 0,
       frequencyPenalty: 0,
