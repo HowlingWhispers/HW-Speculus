@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { V2BrowserProvider, v3RoleplayFormattingIssues } from '../src/v3/providers/browser';
 
 const request = {
-  prompt: 'Render the current scene.', model: 'xialong-v1', temperature: 0.85, maxTokens: 512,
+  prompt: 'Render the current scene.\n\n[IN-WORLD RESPONSE]', model: 'xialong-v1', temperature: 0.85, maxTokens: 512,
   topK: 250, topP: 0.95, presencePenalty: 0, frequencyPenalty: 0,
   stopSequences: [], continueToEndOfSentence: true,
 };
@@ -44,8 +44,10 @@ describe('V3 roleplay formatting guard', () => {
     expect(upstream).toHaveBeenCalledTimes(2);
     const firstBody = JSON.parse(String(upstream.mock.calls[0][1]?.body));
     const secondBody = JSON.parse(String(upstream.mock.calls[1][1]?.body));
+    expect(firstBody.launchId).toBe('launch-fixture');
     expect(firstBody.prompt).toContain('Correct pattern:');
     expect(firstBody.prompt).toContain('Never put spoken dialogue inside asterisks');
+    expect(firstBody.prompt.endsWith('[IN-WORLD RESPONSE]')).toBe(true);
     expect(secondBody.prompt).toContain('FORMAT REPAIR ONLY');
   });
 
