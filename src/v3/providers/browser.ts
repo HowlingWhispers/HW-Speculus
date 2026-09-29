@@ -65,7 +65,11 @@ export function v3RoleplayFormattingIssues(text: string) {
   if (asteriskCount % 2 !== 0) issues.push('unbalanced action asterisks');
   if (straightQuoteCount % 2 !== 0 || leftCurlyQuoteCount !== rightCurlyQuoteCount) issues.push('unbalanced dialogue quotes');
   if (leftBracketCount !== rightBracketCount) issues.push('unbalanced inner-voice brackets');
-  if (/\*[^*]*(?:"[^"]+"|“[^”]+”)[^*]*\*/s.test(trimmed)) issues.push('dialogue nested inside action italics');
+
+  const actionSegments = trimmed.split('*');
+  const actionContainsDialogue = actionSegments.some((segment, index) =>
+    index % 2 === 1 && /(?:"[^"]+"|“[^”]+”)/s.test(segment));
+  if (actionContainsDialogue) issues.push('dialogue nested inside action italics');
 
   const residue = trimmed
     .replace(/\*[^*]+\*/gs, ' ')
