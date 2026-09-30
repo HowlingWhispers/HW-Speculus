@@ -20,14 +20,15 @@ const PIPELINE_STEPS = ['resolve', 'context', 'generate', 'validate', 'commit'] 
 const PENDING_IMPORT_KEY = 'speculus.pending-import.v3.experimental';
 
 type PendingSaveIdentity = ReturnType<typeof inspectV2Session>;
+type ClaimedLaunch = { package: V2ClientPackage; resumeSave?: unknown };
 
-let claim: { code: string; promise: Promise<V2ClientPackage> } | null = null;
+let claim: { code: string; promise: Promise<ClaimedLaunch> } | null = null;
 function claimPackage(code: string) {
   if (claim?.code === code) return claim.promise;
   const promise = fetch(`/api/v2/launch/${encodeURIComponent(code)}`, { credentials: 'same-origin', cache: 'no-store' }).then(async (response) => {
-    const body = await response.json() as { package?: unknown; error?: string };
+    const body = await response.json() as { package?: unknown; resumeSave?: unknown; error?: string };
     if (!response.ok) throw new Error(body.error || 'V3 launch could not be claimed.');
-    return parseV2ClientPackage(body.package);
+    return { package: parseV2ClientPackage(body.package), ...(body.resumeSave === undefined ? {} : { resumeSave: body.resumeSave }) };
   });
   claim = { code, promise };
   return promise;
@@ -78,9 +79,10 @@ export function V2App() {
     const code = new URLSearchParams(window.location.search).get('launch');
     void (async () => {
       try {
-        let next = code ? createV2Session(await claimPackage(code)) : loadV2Session();
+        const claimed = code ? await claimPackage(code) : null;
+        let next = claimed ? createV2Session(claimed.package) : loadV2Session();
         if (code && next) {
-          let pending = sessionStorage.getItem(PENDING_IMPORT_KEY);
+          let pending = claimed?.resumeSave === undefined ? sessionStorage.getItem(PENDING_IMPORT_KEY) : JSON.stringify(claimed.resumeSave);
           if (!pending) {
             const latest = loadLatestV2LocalAutosave();
             const source = latest?.identity;
