@@ -42,6 +42,29 @@ export const diagnosticsSchema = z.object({
   providerKind: z.string().optional(), providerEndpoint: z.string().optional(), requestId: z.string().optional(),
   finishReason: z.string().optional(), requestedMaxTokens: z.number().optional(), providerInputTokensEstimate: z.number().optional(),
   generationSettings: generationSettingsSchema.optional(),
+  outputCompliance: z.object({
+    preset: z.enum(['short', 'normal', 'long', 'marathon']),
+    ceilingTokens: z.number().int(),
+    targetMinTokens: z.number().int(),
+    targetMaxTokens: z.number().int(),
+    approximateOutputTokens: z.number().int(),
+    paragraphCount: z.number().int(),
+    paragraphNormalizationApplied: z.boolean(),
+    splitParagraphs: z.number().int(),
+    band: z.enum(['under-target', 'within-target', 'over-target']),
+    stoppedExtremelyEarly: z.boolean().optional(),
+    stoppedExtremelyEarlyForMarathon: z.boolean().optional(),
+  }).optional(),
+  continuity: z.object({
+    latestCommittedTurnId: z.string().nullable(),
+    continuityFrontierTurnId: z.string().nullable(),
+    continuityTurnIds: z.array(z.string()),
+    recentTurnIdsOffered: z.array(z.string()),
+    recentTurnIdsIncluded: z.array(z.string()),
+    recentTurnIdsClipped: z.array(z.string()),
+    recentTurnIdsOmitted: z.array(z.object({ id: z.string(), reason: z.string() })),
+    latestTurnMissingFromContext: z.boolean(),
+  }).optional(),
 });
 export type V2Diagnostics = z.infer<typeof diagnosticsSchema>;
 const relationshipDimensionsSchema = z.object({

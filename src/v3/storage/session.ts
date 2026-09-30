@@ -27,6 +27,123 @@ const sourceSchema = z.object({
 });
 const transferSchema = stateSchema.extend({ format: z.literal(V2_EXPORT_FORMAT), source: sourceSchema });
 
+/** Top-level shape of any Speculus save, used to classify a file before validation. */
+const V3_EXPORT_FORMAT = 'speculus-v2-session';
+const V1_EXPORT_FORMATS = new Set(['speculus-session', 'speculus-raw-session', 'speculus-session-v1', 'speculus-v1-session']);
+
+export class SpeculusImportError extends Error {
+  constructor(message: string, readonly detail?: string) {
+    super(message);
+    this.name = 'SpeculusImportError';
+  }
+}
+
+type ImportClassification =
+  | { kind: 'v2-compatible' }
+  | { kind: 'v1' }
+  | { kind: 'unknown' };
+
+/**
+ * Separates JSON syntax problems and file identity from current-schema
+ * validation, so a valid Speculus save is never reported as a V1 file.
+ */
+function classifyTransfer(value: unknown): ImportClassification {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { kind: 'unknown' };
+  const record = value as Record<string, unknown>;
+  const format = typeof record.format === 'string' ? record.format : null;
+  if (format === V3_EXPORT_FORMAT && record.version === 2) return { kind: 'v2-compatible' };
+  if (format && V1_EXPORT_FORMATS.has(format)) return { kind: 'v1' };
+  if (format) return { kind: 'unknown' };
+  // A bare V2/V3 state without the format marker is still ours, not V1.
+  if (record.version === 2 && record.engine === 'v2' && Array.isArray(record.turns)) return { kind: 'v2-compatible' };
+  return { kind: 'unknown' };
+}
+
+function parseTransferJson(raw: string): Record<string, unknown> {
+  if (new Blob([raw]).size > MAX_V2_FILE_BYTES) throw new SpeculusImportError('The V3 experimental file exceeds 16 MB.');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (cause) {
+    throw new SpeculusImportError('Import failed: this file is not valid JSON.', cause instanceof Error ? cause.message : undefined);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new SpeculusImportError('This file is not a recognized Speculus session export.');
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * Safe, semantics-preserving migration for exports written before optional
+ * fields existed. Only defaults for genuinely optional/derived collections are
+ * applied; canonical world state and turns are never fabricated or altered.
+ */
+function migrateV2Transfer(value: Record<string, unknown>) {
+  const migrated: Record<string, unknown> = { ...value };
+  if (migrated.stateProposals === undefined) migrated.stateProposals = [];
+  if (migrated.relationships === undefined) migrated.relationships = {};
+  if (migrated.draft === undefined || migrated.draft === null) migrated.draft = '';
+  if (migrated.settings === undefined || migrated.settings === null) migrated.settings = {};
+  if (migrated.settings && typeof migrated.settings === 'object' && !Array.isArray(migrated.settings)) {
+    const settings = { ...(migrated.settings as Record<string, unknown>) };
+    // settingsSchema already defaults these; being explicit documents intent.
+    for (const key of ['tone', 'tags', 'freeform', 'stopSequences'] as const) {
+      if (settings[key] === undefined) settings[key] = Array.isArray(settings[key]) ? [] : '';
+    }
+    migrated.settings = settings;
+  }
+  if (Array.isArray(migrated.turns)) {
+    migrated.turns = migrated.turns.map((turn) => {
+      if (!turn || typeof turn !== 'object' || Array.isArray(turn)) return turn;
+      const record = turn as Record<string, unknown>;
+      const diagnostics = record.diagnostics;
+      if (!diagnostics || typeof diagnostics !== 'object' || Array.isArray(diagnostics)) return turn;
+      const fixed = { ...(diagnostics as Record<string, unknown>) };
+      // These are presentation/diagnostic collections. Older exports predate
+      // several of them; an empty list preserves their original meaning.
+      for (const key of ['included', 'omitted', 'issues', 'warnings'] as const) {
+        if (fixed[key] === undefined || fixed[key] === null) fixed[key] = [];
+      }
+      if (typeof fixed.prompt !== 'string') fixed.prompt = fixed.prompt === undefined ? '' : String(fixed.prompt);
+      for (const key of ['estimatedInputTokens', 'outputBudget', 'durationMs'] as const) {
+        if (typeof fixed[key] !== 'number' || !Number.isFinite(fixed[key])) fixed[key] = 0;
+      }
+      if (typeof fixed.model !== 'string') fixed.model = 'unknown';
+      if (typeof fixed.completionStatus !== 'string') fixed.completionStatus = 'unknown';
+      if (typeof fixed.worldRevision !== 'number' || !Number.isFinite(fixed.worldRevision)) fixed.worldRevision = 0;
+      return { ...record, diagnostics: fixed };
+    });
+  }
+  return migrated;
+}
+
+function firstIssueReason(issues: z.core.$ZodIssue[]) {
+  const issue = issues[0];
+  if (!issue) return 'the file did not match the current save schema.';
+  const path = issue.path.length ? issue.path.join('.') : 'root';
+  return `${path}: ${issue.message}`;
+}
+
+function parseV2Transfer(raw: string) {
+  const parsedJson = parseTransferJson(raw);
+  const classification = classifyTransfer(parsedJson);
+  if (classification.kind === 'v1') {
+    throw new SpeculusImportError('This is a V1 save. V1 files must stay in V1.', `format: ${String(parsedJson.format)}`);
+  }
+  if (classification.kind === 'unknown') {
+    throw new SpeculusImportError('This file is not a recognized Speculus session export.');
+  }
+  const migrated = migrateV2Transfer(parsedJson);
+  const parsed = transferSchema.safeParse(migrated);
+  if (!parsed.success) {
+    throw new SpeculusImportError(
+      'Speculus recognized this as a V2/V3 session export, but it could not be migrated to the current save schema.',
+      firstIssueReason(parsed.error.issues),
+    );
+  }
+  return parsed.data;
+}
+
 function reconcileWorldActors(world: z.infer<typeof worldSchema>, launch: V2ClientPackage) {
   const expected = createWorld(launch).actors;
   const savedById = new Map(world.actors.map((actor) => [actor.id, actor]));
@@ -129,20 +246,14 @@ export function exportV2Session(session: V2Session, now = Date.now()): string {
 }
 
 export function inspectV2Session(raw: string) {
-  if (new Blob([raw]).size > MAX_V2_FILE_BYTES) throw new Error('The V3 experimental file exceeds 16 MB.');
-  const parsed = transferSchema.safeParse(JSON.parse(raw));
-  if (!parsed.success) throw new Error('This is not a supported V2-compatible export. V1 files must stay in V1.');
-  return parsed.data.source;
+  return parseV2Transfer(raw).source;
 }
 
 export function importV2Session(raw: string, current: V2Session): V2Session {
-  if (new Blob([raw]).size > MAX_V2_FILE_BYTES) throw new Error('The V3 experimental file exceeds 16 MB.');
-  const parsed = transferSchema.safeParse(JSON.parse(raw));
-  if (!parsed.success) throw new Error('This is not a supported V2-compatible export. V1 files must stay in V1.');
-  const value = parsed.data;
+  const value = parseV2Transfer(raw);
   const source = current.launch.primaryAsset;
   if (value.source.id !== source.id || value.source.type !== source.type || value.source.revision !== source.revision) {
-    throw new Error('Import requires the same Orbis record and canonical revision. No session was changed.');
+    throw new SpeculusImportError('Import requires the same Orbis record and canonical revision. No session was changed.');
   }
   const { format: _format, source: _source, ...rawState } = value;
   const state = reconcileImportedStateActors(rawState, current.launch);

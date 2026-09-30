@@ -46,7 +46,12 @@ export function selectV3ContextBlocks(blocks: V3ContextBlock[], maxCharacters: n
 
   for (const block of indexed.filter((value) => value.required)) {
     if (used + block.rendered.length > maxCharacters) {
-      throw new Error(`Required V3 context block "${block.title}" exceeds the remaining context budget.`);
+      // Deliberately loud. Silently dropping required current-scene context would
+      // let the renderer continue from stale history, so the turn fails instead.
+      throw new Error(
+        'Speculus could not build a safe generation context because required current-scene context exceeded the available budget. No turn was generated or committed.',
+        { cause: `Required V3 context block "${block.title}" needs ${used + block.rendered.length} characters but only ${maxCharacters} are available.` },
+      );
     }
     selected.add(block.index);
     used += block.rendered.length;

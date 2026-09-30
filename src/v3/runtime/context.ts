@@ -9,6 +9,14 @@ export const CONTEXT_CHARACTER_BUDGET = 28_000;
 export const V3_RECENT_EXCHANGE_COUNT = 4;
 export const V3_CHRONICLE_TURN_COUNT = 12;
 export const V3_ARCHIVE_TURN_COUNT = 48;
+// The narrative frontier gets a reserved, deterministically clipped block so an
+// oversized newest reply can never be dropped wholesale by atomic selection.
+export const V3_CONTINUITY_TURN_COUNT = 2;
+export const V3_CONTINUITY_CHARACTER_BUDGET = 6_000;
+const V3_CONTINUITY_PLAYER_HEAD = 400;
+const V3_CONTINUITY_PLAYER_TAIL = 200;
+const V3_CONTINUITY_REPLY_HEAD = 1_400;
+const V3_CONTINUITY_REPLY_TAIL = 2_000;
 
 export type V2RenderMode = 'normal' | 'skip-persona' | 'impersonate-persona';
 
@@ -65,11 +73,54 @@ function archiveLine(turn: V2Turn, session: V2Session, playerName: string, subje
   return `${turn.id} | ${playerName}: ${player} | ${replySubject}: ${reply}`;
 }
 
-function historyBlocks(session: V2Session): { blocks: V3ContextBlock[]; omitted: string[] } {
+const ELISION_MARKER = '[... earlier prose elided to protect the continuity budget; wording above and below is verbatim ...]';
+
+/**
+ * Clips while keeping the head (who acted) and the tail (where the next turn
+ * must continue). Never rewords, only drops the middle.
+ */
+function clipKeepingContinuity(value: string, head: number, tail: number) {
+  const trimmed = value.trim();
+  if (trimmed.length <= head + tail) return trimmed;
+  return `${trimmed.slice(0, head).trimEnd()}\n${ELISION_MARKER}\n${trimmed.slice(-tail).trimStart()}`;
+}
+
+function continuityExchange(turn: V2Turn, session: V2Session, playerName: string, subjectName: string, isLatest: boolean) {
+  const replySubject = replySubjectName(turn, session, subjectName);
+  const player = isSkippedPersonaTurn(turn.player)
+    ? skippedTurnText(turn, session)
+    : clipKeepingContinuity(turn.player, V3_CONTINUITY_PLAYER_HEAD, V3_CONTINUITY_PLAYER_TAIL);
+  const reply = clipKeepingContinuity(turn.reply, V3_CONTINUITY_REPLY_HEAD, V3_CONTINUITY_REPLY_TAIL);
+  return [
+    `Turn ${turn.id} | committed at world revision r${turn.worldRevision} | ${isLatest ? 'LATEST COMMITTED TURN / NARRATIVE FRONTIER' : 'previous committed turn'}`,
+    `Player ${playerName} said:`,
+    player,
+    `${replySubject} replied (${isLatest ? 'final visible state of the scene; continue directly from its last line' : 'earlier committed reply'}):`,
+    reply,
+  ].join('\n');
+}
+
+export type V3ContinuityDiagnostics = {
+  latestCommittedTurnId: string | null;
+  continuityFrontierTurnId: string | null;
+  continuityTurnIds: string[];
+  recentTurnIdsOffered: string[];
+  recentTurnIdsIncluded: string[];
+  recentTurnIdsClipped: string[];
+  recentTurnIdsOmitted: Array<{ id: string; reason: string }>;
+  latestTurnMissingFromContext: boolean;
+};
+
+function historyBlocks(session: V2Session): { blocks: V3ContextBlock[]; omitted: string[]; continuity: V3ContinuityDiagnostics } {
   const subjectName = session.launch.character?.name ?? 'Simulation Narrator';
   const playerName = session.launch.persona.name;
-  const recentStart = Math.max(0, session.turns.length - V3_RECENT_EXCHANGE_COUNT);
-  const recentTurns = session.turns.slice(recentStart);
+  // The continuity block exclusively owns the newest committed turns. Ordinary
+  // recent/chronicle/archive selection starts strictly before it, so the same
+  // exchange is never rendered twice.
+  const continuityCount = Math.min(V3_CONTINUITY_TURN_COUNT, session.turns.length);
+  const continuityTurns = session.turns.slice(session.turns.length - continuityCount);
+  const recentStart = Math.max(0, session.turns.length - continuityCount - V3_RECENT_EXCHANGE_COUNT);
+  const recentTurns = session.turns.slice(recentStart, session.turns.length - continuityCount);
   const older = session.turns.slice(0, recentStart);
   const chronicleStart = Math.max(0, older.length - V3_CHRONICLE_TURN_COUNT);
   const chronicleTurns = older.slice(chronicleStart);
@@ -82,13 +133,42 @@ function historyBlocks(session: V2Session): { blocks: V3ContextBlock[]; omitted:
   }
 
   const blocks: V3ContextBlock[] = [];
-  for (let index = 0; index < recentTurns.length; index += 1) {
-    const turn = recentTurns[index];
+
+  const latestCommittedTurnId = session.turns.at(-1)?.id ?? null;
+  const continuityTurnIds = continuityTurns.map((turn) => turn.id);
+  const continuityFrontierTurnId = latestCommittedTurnId;
+  const recentTurnIdsOffered = recentTurns.map((turn) => turn.id);
+  // Only the continuity window can be clipped; recent/chronicle/archive already
+  // clip their own text and are never reported as frontier clips.
+  const recentTurnIdsClipped = continuityTurns
+    .filter((turn) => turn.reply.length > V3_CONTINUITY_REPLY_HEAD + V3_CONTINUITY_REPLY_TAIL)
+    .map((turn) => turn.id);
+
+  // Both windows are required and emitted in index order, so the renderer reads
+  // recent history oldest-first and then the frontier, keeping one ascending
+  // chronological narrative instead of duplicating the newest exchanges.
+  if (recentTurns.length) {
     blocks.push({
-      id: `recent:${turn.id}`,
-      title: 'Recent exchange (context only, not engine authority)',
-      content: recentExchange(turn, session, playerName, subjectName),
-      priority: 90 + index,
+      id: 'recent-history',
+      title: 'RECENT COMMITTED EXCHANGES BEFORE THE CURRENT FRONTIER / OLDEST FIRST',
+      content: recentTurns
+        .map((turn) => chronicleExchange(turn, session, playerName, subjectName))
+        .join('\n\n'),
+      priority: 99,
+      required: true,
+    });
+  }
+
+  if (continuityTurns.length) {
+    blocks.push({
+      id: 'immediate-continuity',
+      title: 'IMMEDIATE CONTINUITY / LATEST COMMITTED EXCHANGE / ALWAYS AUTHORITATIVE FOR SCENE FRONTIER',
+      content: [
+        'Continue directly from the end of the latest committed exchange below. This exchange is the current narrative frontier. Older chronicle or archive material is background only and must never replace or supersede it.',
+        ...continuityTurns.map((turn, index) => continuityExchange(turn, session, playerName, subjectName, index === continuityTurns.length - 1)),
+      ].join('\n'),
+      priority: 99,
+      required: true,
     });
   }
 
@@ -111,7 +191,20 @@ function historyBlocks(session: V2Session): { blocks: V3ContextBlock[]; omitted:
     });
   }
 
-  return { blocks, omitted };
+  return {
+    blocks,
+    omitted,
+    continuity: {
+      latestCommittedTurnId,
+      continuityFrontierTurnId,
+      continuityTurnIds,
+      recentTurnIdsOffered,
+      recentTurnIdsClipped,
+      recentTurnIdsIncluded: [],
+      recentTurnIdsOmitted: [],
+      latestTurnMissingFromContext: false,
+    },
+  };
 }
 
 function relevantDomainBlocks(session: V2Session): V3ContextBlock[] {
@@ -233,6 +326,84 @@ export function v2OutputEnvelope(maxTokens: number) {
   };
 }
 
+export type V3OutputPreset = 'short' | 'normal' | 'long' | 'marathon';
+
+export type V3OutputContract = {
+  preset: V3OutputPreset;
+  ceilingTokens: number;
+  targetMinTokens: number;
+  targetMaxTokens: number;
+  paragraphs: string;
+  emphasis: string[];
+};
+
+/**
+ * The numeric ceiling is not a writing instruction. Each preset carries its own
+ * explicit shape contract so the model is told how to behave, not just how much
+ * room it has. Marathons expand depth inside the current beat, never time.
+ */
+export function outputContractFor(preset: V3OutputPreset, envelope: { hardLimitTokens: number; targetTokens: number }): V3OutputContract {
+  const base = { preset, ceilingTokens: envelope.hardLimitTokens, paragraphs: '', emphasis: [] as string[] };
+  if (preset === 'short') {
+    return {
+      ...base,
+      targetMinTokens: 80,
+      targetMaxTokens: 160,
+      paragraphs: 'usually 1-2 short paragraphs',
+      emphasis: [
+        'Write one immediate action, reaction, or dialogue beat and stop.',
+        'No recap, no scene expansion, no extra conversational exchange.',
+        'Stop promptly after the immediate response rather than filling the ceiling.',
+      ],
+    };
+  }
+  if (preset === 'long') {
+    return {
+      ...base,
+      targetMinTokens: 450,
+      targetMaxTokens: 800,
+      paragraphs: 'usually 4-7 readable paragraphs',
+      emphasis: [
+        'Develop deeper description, reactions and atmosphere around the current beat.',
+        'Still do not advance multiple turns or finish an entire scene.',
+      ],
+    };
+  }
+  if (preset === 'marathon') {
+    return {
+      ...base,
+      targetMinTokens: 900,
+      targetMaxTokens: 1600,
+      paragraphs: 'several readable paragraphs',
+      emphasis: [
+        'MARATHON means write substantially more about the current playable beat. Expand DEPTH, not TIME.',
+        'Add richer sensory and environmental detail, physical reactions, dialogue texture and scene detail.',
+        'Do not manufacture multiple NPC exchanges, skip player decisions, close the topic, or fast-forward the scene merely to become longer.',
+        'Never simulate the next ten minutes of play without the player.',
+      ],
+    };
+  }
+  return {
+    ...base,
+    preset: 'normal',
+    targetMinTokens: 220,
+    targetMaxTokens: 400,
+    paragraphs: 'usually 2-4 readable paragraphs',
+    emphasis: [
+      'Deliver one immediate playable beat with moderate description.',
+    ],
+  };
+}
+
+const readabilityRules = [
+  'OUTPUT STRUCTURE / READABILITY RULES:',
+  'Use short, readable paragraphs. Do not output a single giant prose block.',
+  'Prefer a blank line between natural roleplay paragraphs.',
+  'A paragraph should normally contain one coherent action, observation, dialogue beat, or a tightly related combination.',
+  'Separate dialogue from substantial narration or action when practical.',
+  'Do not add headings, bullet lists, speaker labels, or out-of-character formatting.',
+];
+
 export function compileV2Context(
   session: V2Session,
   player = '',
@@ -242,6 +413,7 @@ export function compileV2Context(
   const { launch, world, settings } = session;
   const clock = worldClock(world);
   const outputEnvelope = v2OutputEnvelope(settings.maxTokens);
+  const outputContract = outputContractFor(settings.output, outputEnvelope);
   const impersonatingPersona = mode === 'impersonate-persona';
   const skippingPersona = mode === 'skip-persona';
   const skipAsActorId = skippingPersona ? skippedPersonaActorId(player) : null;
@@ -260,8 +432,11 @@ export function compileV2Context(
       : resolution?.subjectPerception ?? (subjectActorId ? perceptionFor(world, subjectActorId) : null);
 
   const outputRules = [
+    `SELECTED OUTPUT PRESET: ${outputContract.preset.toUpperCase()}. This preset name is the active writing contract, not a suggestion.`,
     `The provider hard ceiling is ${outputEnvelope.hardLimitTokens} tokens. This is an emergency ceiling, never a target.`,
-    `Aim to finish the complete turn by about ${outputEnvelope.targetTokens} tokens and leave roughly ${outputEnvelope.completionReserveTokens} tokens unused as a completion reserve.`,
+    `Aim to finish the complete turn between about ${outputContract.targetMinTokens} and ${outputContract.targetMaxTokens} tokens. This range is the desired response shape, not merely a maximum.`,
+    `Structure the response as ${outputContract.paragraphs}.`,
+    ...outputContract.emphasis,
     'A non-empty roleplay response is required. Do not stop or emit end-of-sequence before producing the requested prose.',
     'Near the target, finish the current immediate beat and stop. Do not begin a new sentence, paragraph, action, or dialogue exchange merely because budget remains.',
     'Never trade a complete ending for extra description. Every opened quote, asterisk-delimited action, or bracketed inner voice must be closed before stopping.',
@@ -281,6 +456,7 @@ export function compileV2Context(
     `Begin directly with ${launch.persona.name}'s action, dialogue, or inner voice. Do not prefix a speaker name, role label, heading, explanation, or menu.`,
     'Stop when the player persona turn is complete. Do not generate the other side of the exchange.',
     ...outputRules,
+    ...readabilityRules,
   ].join('\n') : [
     'SPECULUS V3 EXPERIMENTAL / PLAYER-PERSPECTIVE WORLD RENDERING CONTRACT',
     'Render the current simulated world through the player persona\'s perceptual viewpoint. The authorized subject may act, but the prose camera belongs to the player.',
@@ -307,7 +483,17 @@ export function compileV2Context(
       : skippingPersona
         ? 'The operator explicitly skipped the player persona turn. Continue one immediate beat from current resolved state and do not invent any player action, dialogue, thought, consent, decision or movement.'
         : 'Player input describes an attempt or utterance. It is evidence for resolution, not permission for the renderer to rewrite canon or engine state.',
+    ...(skippingPersona ? [
+      'SKIP TURN CONTINUITY RULES / HIGHEST NARRATIVE PRIORITY:',
+      'Continue directly from the end of the latest committed exchange in the IMMEDIATE CONTINUITY block below. That exchange is the current narrative frontier. Older chronicle or archive material is background only and must never replace or supersede it.',
+      'Do not reinterpret an earlier player turn, replay a resolved outcome, or resurrect a closed older beat.',
+      'Do not treat chronicle/archive memory as the current scene. Continue from the final state and final prose of the newest committed turn.',
+      'One skip advances exactly one immediate NPC/world beat. Never simulate the next several minutes of play.',
+      'No authoritative time advancement unless an engine mechanic explicitly performed it in TURN RESOLUTION above.',
+      'Never invent a player action, speech, thought, consent, decision, or movement.',
+    ] : []),
     ...outputRules,
+    ...readabilityRules,
     skipAsActor
       ? `Authorized subject for this turn: ${skipAsActor.name}. Render only ${skipAsActor.name}'s next immediate beat and only its outward result available to ${launch.persona.name}.`
       : launch.character
@@ -325,8 +511,16 @@ export function compileV2Context(
     },
     {
       id: 'output-envelope',
-      title: 'OUTPUT BUDGET / HARD CEILING',
-      content: asText(outputEnvelope),
+      title: 'OUTPUT PRESET CONTRACT / TARGET SHAPE AND HARD CEILING',
+      content: asText({
+        preset: outputContract.preset,
+        ceilingTokens: outputContract.ceilingTokens,
+        targetMinTokens: outputContract.targetMinTokens,
+        targetMaxTokens: outputContract.targetMaxTokens,
+        paragraphs: outputContract.paragraphs,
+        emphasis: outputContract.emphasis,
+        completionReserveTokens: outputEnvelope.completionReserveTokens,
+      }),
       priority: 100,
       required: true,
     },
@@ -506,6 +700,23 @@ export function compileV2Context(
     ...history.omitted,
   ];
 
+  // Continuity diagnostics are computed from the real selection outcome, never
+  // from intent, so a dropped frontier turn is always visible.
+  const includedIds = new Set(selection.included.map((block) => block.id));
+  const continuity = history.continuity;
+  // The recent window is one required block, so it is included or the compile
+  // already threw. Report it honestly either way.
+  const recentGroupIncluded = includedIds.has('recent-history');
+  const recentTurnIdsIncluded = recentGroupIncluded ? [...continuity.recentTurnIdsOffered] : [];
+  const recentTurnIdsOmitted = recentGroupIncluded
+    ? []
+    : continuity.recentTurnIdsOffered.map((id) => ({ id, reason: 'required context did not fit the budget' }));
+  const frontierId = continuity.continuityFrontierTurnId;
+  const latestTurnMissingFromContext = frontierId !== null && !selection.text.includes(frontierId);
+  if (latestTurnMissingFromContext) {
+    omitted.push(`CRITICAL: latest committed turn ${frontierId} is absent from renderer context during Skip.`);
+  }
+
   const outsideScene = assetsFor(launch)
     .filter((asset) => !sceneIds.has(asset.id))
     .map((asset) => `${asset.name}: outside current player-visible scene`);
@@ -519,6 +730,14 @@ export function compileV2Context(
     outputBudget: settings.maxTokens,
     outputTarget: outputEnvelope.targetTokens,
     completionReserve: outputEnvelope.completionReserveTokens,
+    outputPreset: settings.output,
+    outputContract: outputContractFor(settings.output, outputEnvelope),
+    continuity: {
+      ...continuity,
+      recentTurnIdsIncluded,
+      recentTurnIdsOmitted,
+      latestTurnMissingFromContext,
+    },
     perception: playerPerception,
     playerPerception,
     subjectPerception,

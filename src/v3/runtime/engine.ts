@@ -6,6 +6,7 @@ import { resolveV2PlayerTurn } from './resolution';
 import { rollbackTurnOwnedActions, settingsSchema, type V2Diagnostics, type V2Session, type V2Turn } from './session';
 import { SKIPPED_PERSONA_TURN, isSkippedPersonaTurn, skippedPersonaActorId, skippedPersonaTurnAs } from './turn-control';
 import { deriveStateProposals } from './state-review';
+import { approximateV2OutputTokens, countV2Paragraphs, normalizeV2Paragraphs } from './paragraphs';
 
 export type EnginePhase = 'resolve' | 'context' | 'generate' | 'validate' | 'commit';
 export class V2DraftRejected extends Error {
@@ -146,7 +147,12 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   const sanitizedReply = stripV3ProtocolArtifacts(decodedReply);
   const decodedIssues = validateV2Reply(sanitizedReply, workingSession.launch.persona.name);
   const canNormalize = result.metadata.completionStatus !== 'max_tokens' && rawIssues.length === 0 && decodedIssues.length === 0;
-  const normalizedReply = canNormalize ? normalizeV2RoleplayFormat(sanitizedReply) : sanitizedReply;
+  const roleplayNormalized = canNormalize ? normalizeV2RoleplayFormat(sanitizedReply) : sanitizedReply;
+  // Conservative readability pass. Only inserts paragraph breaks; never rewords.
+  const paragraphPass = canNormalize
+    ? normalizeV2Paragraphs(roleplayNormalized)
+    : { text: roleplayNormalized, applied: false, paragraphs: countV2Paragraphs(roleplayNormalized), splitParagraphs: 0 };
+  const normalizedReply = paragraphPass.text;
   const issues = [...new Set([...rawIssues, ...decodedIssues, ...validateV2Reply(normalizedReply, workingSession.launch.persona.name)])];
   if (result.metadata.completionStatus === 'max_tokens') {
     issues.push('The provider reached the hard output ceiling. The cut-off reply was discarded instead of being committed.');
@@ -164,7 +170,8 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   if (options.reroll) warnings.push('Reroll reused the already-resolved world state. Elapsed time and narrative dice were not rolled or committed twice.');
   if (decodedReply !== rawReply) warnings.push('Serialized roleplay escape sequences were decoded before commit.');
   if (sanitizedReply !== decodedReply) warnings.push('Legacy Speculus turn/control markers were stripped before commit.');
-  if (canNormalize && normalizedReply !== sanitizedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
+  if (canNormalize && roleplayNormalized !== sanitizedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
+  if (paragraphPass.applied) warnings.push(`Paragraph readability pass inserted ${paragraphPass.splitParagraphs} paragraph break(s). Wording was not changed.`);
   if (compiled.omitted.length) warnings.push('Some history/canon was omitted. Inspect the Context tab for the exact list.');
   const at = options.now ?? Date.now();
   let relationships = relationshipBase;
@@ -192,8 +199,39 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
       if (relationshipEvent) warnings.push(`Relationship state updated: ${relationshipEvent.reason}`);
     }
   }
+  const approximateOutputTokens = approximateV2OutputTokens(normalizedReply);
+  const outputCompliance = {
+    preset: compiled.outputContract.preset,
+    ceilingTokens: compiled.outputContract.ceilingTokens,
+    targetMinTokens: compiled.outputContract.targetMinTokens,
+    targetMaxTokens: compiled.outputContract.targetMaxTokens,
+    approximateOutputTokens,
+    paragraphCount: paragraphPass.paragraphs,
+    paragraphNormalizationApplied: paragraphPass.applied,
+    splitParagraphs: paragraphPass.splitParagraphs,
+    band: approximateOutputTokens < compiled.outputContract.targetMinTokens
+      ? 'under-target' as const
+      : approximateOutputTokens > compiled.outputContract.targetMaxTokens
+        ? 'over-target' as const
+        : 'within-target' as const,
+  };
+  // Marathons frequently stop far too early. maxTokens alone cannot detect that,
+  // so flag a hard-stop that landed well under the requested depth.
+  const stoppedExtremelyEarly = approximateOutputTokens < Math.floor(compiled.outputContract.targetMinTokens * 0.5);
+  if (outputCompliance.preset === 'marathon' && stoppedExtremelyEarly) {
+    warnings.push(`Marathon requested ${compiled.outputContract.targetMinTokens}-${compiled.outputContract.targetMaxTokens} tokens but the provider produced roughly ${approximateOutputTokens}. The provider stopped early; generated text was not padded and no extra scene progression was invented.`);
+  }
+  if (compiled.continuity.latestTurnMissingFromContext) {
+    warnings.push(`CRITICAL continuity failure: latest committed turn ${compiled.continuity.latestCommittedTurnId} was absent from renderer context.`);
+  }
   const diagnostics: V2Diagnostics = {
     prompt: compiled.prompt, included: compiled.included, omitted: compiled.omitted,
+    outputCompliance: {
+      ...outputCompliance,
+      stoppedExtremelyEarly,
+      stoppedExtremelyEarlyForMarathon: outputCompliance.preset === 'marathon' ? stoppedExtremelyEarly : undefined,
+    },
+    continuity: compiled.continuity,
     estimatedInputTokens: compiled.estimatedInputTokens, outputBudget: compiled.outputBudget,
     issues, warnings, model: workingSession.launch.model, durationMs: result.metadata.durationMs,
     completionStatus: result.metadata.completionStatus ?? 'unknown', worldRevision: resolvedSession.world.revision,

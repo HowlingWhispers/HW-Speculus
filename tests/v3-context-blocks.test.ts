@@ -37,7 +37,20 @@ describe('V3 context block selection', () => {
   });
 
   it('fails closed when required context cannot fit', () => {
+    // Loud failure by design: silently dropping required current-scene context
+    // would let the renderer continue from stale history.
     expect(() => selectV3ContextBlocks([block('core', 'required-state', 100, true)], 4))
-      .toThrow('Required V3 context block');
+      .toThrow('Speculus could not build a safe generation context because required current-scene context exceeded the available budget. No turn was generated or committed.');
+  });
+
+  it('reports which required block overflowed without dumping context', () => {
+    try {
+      selectV3ContextBlocks([block('core', 'required-state', 100, true)], 4);
+      throw new Error('expected a throw');
+    } catch (cause) {
+      const error = cause as Error;
+      expect(error.cause).toContain('CORE');
+      expect(error.cause).toContain('available');
+    }
   });
 });

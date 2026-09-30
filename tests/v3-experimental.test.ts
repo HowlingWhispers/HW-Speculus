@@ -78,7 +78,7 @@ describe('V3 experimental protocol isolation', () => {
 
     expect(packet.prompt.startsWith('SPECULUS V3 EXPERIMENTAL /')).toBe(true);
     expect(packet.prompt).toContain('[IN-WORLD RESPONSE]');
-    expect(packet.prompt).toContain('Recent exchange (context only, not engine authority)');
+    expect(packet.prompt).toContain('IMMEDIATE CONTINUITY / LATEST COMMITTED EXCHANGE / ALWAYS AUTHORITATIVE FOR SCENE FRONTIER');
     expect(packet.prompt).not.toContain('[PLAYER TURN]');
     expect(packet.prompt).not.toContain('[END PLAYER TURN]');
     
@@ -97,9 +97,16 @@ describe('V3 experimental protocol isolation', () => {
 
     value.draft = '*I continue.*';
     const packet = compileV2Context(value, value.draft);
-    const recentCount = packet.prompt.match(/Recent exchange \(context only, not engine authority\)/g)?.length ?? 0;
+    // Recent history is one grouped required block, not one block per turn.
+    const recentBlocks = packet.prompt.match(/RECENT COMMITTED EXCHANGES BEFORE THE CURRENT FRONTIER \/ OLDEST FIRST/g)?.length ?? 0;
+    const continuityBlocks = packet.prompt.match(/IMMEDIATE CONTINUITY \/ LATEST COMMITTED EXCHANGE/g)?.length ?? 0;
 
-    expect(recentCount).toBe(4);
+    expect(recentBlocks).toBe(1);
+    expect(continuityBlocks).toBe(1);
+    // the frontier owns the newest committed turn and recent history the four before it
+    expect(packet.continuity.continuityTurnIds).toHaveLength(2);
+    expect(packet.continuity.recentTurnIdsOffered).toHaveLength(4);
+    expect(new Set([...packet.continuity.recentTurnIdsOffered, ...packet.continuity.continuityTurnIds]).size).toBe(6);
     expect(packet.prompt).toContain('SESSION CHRONICLE / DERIVED FROM COMMITTED TURN');
     expect(packet.prompt).toContain('SESSION ARCHIVE RECAP / LOW-PRIORITY DERIVED MEMORY');
     expect(packet.prompt).toContain('marker-20');
