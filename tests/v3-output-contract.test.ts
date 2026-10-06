@@ -4,6 +4,7 @@ import { compileV2Context, outputContractFor, v2OutputEnvelope } from '../src/v3
 import { createV2Session, settingsSchema, OUTPUT_PRESETS } from '../src/v3/runtime/session';
 import { generateV2Turn, normalizeV2RoleplayFormat } from '../src/v3/runtime/engine';
 import { normalizeV2Paragraphs, countV2Paragraphs } from '../src/v3/runtime/paragraphs';
+import { detectV3ProseSlop, needsV3ProseRepair } from '../src/v3/runtime/prose-quality';
 import { MockProvider } from '../src/runtime/providers/mock';
 import type { ProviderRequest } from '../src/runtime/providers/types';
 import { v2Package } from './v2-fixtures';
@@ -29,7 +30,7 @@ describe('V3 output preset contract', () => {
     const compiled = compileV2Context(withPreset('short'), 'go', 'normal');
     expect(compiled.outputContract.preset).toBe('short');
     expect(compiled.outputContract.paragraphs).toContain('1-2 short paragraphs');
-    expect(compiled.prompt).toContain('SELECTED OUTPUT PRESET: SHORT');
+    expect(compiled.prompt).toContain('PRESET: SHORT.');
     expect(compiled.prompt).toContain('usually 1-2 short paragraphs');
     expect(compiled.prompt).toContain('No recap, no scene expansion, no extra conversational exchange.');
   });
@@ -37,7 +38,7 @@ describe('V3 output preset contract', () => {
   it('MARATHON explicitly requests substantially greater depth, expanding depth not time', () => {
     const compiled = compileV2Context(withPreset('marathon'), 'go', 'normal');
     expect(compiled.outputContract.preset).toBe('marathon');
-    expect(compiled.prompt).toContain('SELECTED OUTPUT PRESET: MARATHON');
+    expect(compiled.prompt).toContain('PRESET: MARATHON.');
     expect(compiled.prompt).toContain('Expand DEPTH, not TIME');
     expect(compiled.prompt).toContain('richer sensory and environmental detail');
     expect(compiled.prompt).toContain('Never simulate the next ten minutes of play without the player.');
@@ -60,17 +61,55 @@ describe('V3 output preset contract', () => {
     // and the preset name reaches the prompt, not only the number
     for (const preset of presets) {
       const compiled = compileV2Context(withPreset(preset), 'go', 'normal');
-      expect(compiled.prompt).toContain(`SELECTED OUTPUT PRESET: ${preset.toUpperCase()}`);
+      expect(compiled.prompt).toContain(`PRESET: ${preset.toUpperCase()}.`);
       expect(compiled.prompt).toContain('OUTPUT PRESET CONTRACT / TARGET SHAPE AND HARD CEILING');
     }
   });
 
   it('carries the readability contract into the renderer prompt', () => {
     const compiled = compileV2Context(withPreset('normal'), 'go', 'normal');
-    expect(compiled.prompt).toContain('OUTPUT STRUCTURE / READABILITY RULES:');
-    expect(compiled.prompt).toContain('Do not output a single giant prose block.');
-    expect(compiled.prompt).toContain('Prefer a blank line between natural roleplay paragraphs.');
-    expect(compiled.prompt).toContain('Do not add headings, bullet lists, speaker labels, or out-of-character formatting.');
+    expect(compiled.prompt).toContain('Use short paragraphs.');
+    expect(compiled.prompt).toContain('No headings, bullet lists, speaker labels, or out-of-character formatting.');
+    expect(compiled.prompt).toContain('Target ~');
+    expect(compiled.prompt).toContain('Avoid stock voice textures');
+  });
+
+  it('never advertises a target above a custom hard budget', () => {
+    const value = withPreset('marathon');
+    value.settings = settingsSchema.parse({ ...value.settings, maxTokens: 128 });
+    const compiled = compileV2Context(value, 'go', 'normal');
+    expect(compiled.outputContract.targetMaxTokens).toBeLessThan(128);
+    expect(compiled.outputContract.targetMinTokens).toBeLessThanOrEqual(compiled.outputContract.targetMaxTokens);
+    expect(compiled.prompt).toContain('Target ~96 tokens, hard ceiling 128 tokens.');
+  });
+});
+
+describe('V3 prose specificity guard', () => {
+  it('requires multiple high-confidence constructions before spending a repair call', () => {
+    const one = detectV3ProseSlop('*It was not fear, it was caution.*');
+    const two = detectV3ProseSlop('*It was not fear, it was caution, her gaze a narrow warning.*');
+    expect(needsV3ProseRepair(one)).toBe(false);
+    expect(needsV3ProseRepair(two)).toBe(true);
+  });
+
+  it('repairs one truncated draft within the same hard ceiling', async () => {
+    const session = { ...withPreset('normal'), draft: 'I wait beside the door.' };
+    const requests: ProviderRequest[] = [];
+    const provider = {
+      kind: 'mock' as const,
+      async generate(request: ProviderRequest) {
+        requests.push(request);
+        return requests.length === 1
+          ? { text: '*She reaches for the', metadata: { provider: 'mock' as const, model: request.model, endpoint: 'mock', durationMs: 2, completionStatus: 'max_tokens' as const } }
+          : { text: '*She stops beside the door and listens.*', metadata: { provider: 'mock' as const, model: request.model, endpoint: 'mock', durationMs: 3, completionStatus: 'completed' as const } };
+      },
+    };
+    const next = await generateV2Turn(session, provider);
+    expect(requests).toHaveLength(2);
+    expect(requests[1].maxTokens).toBe(OUTPUT_PRESETS.normal);
+    expect(requests[1].prompt).toContain('[ONE BOUNDED PROSE REPAIR]');
+    expect(next.turns.at(-1)?.reply).toContain('stops beside the door');
+    expect(next.turns.at(-1)?.diagnostics.warnings.join(' ')).toContain('hard-ceiling truncation');
   });
 });
 

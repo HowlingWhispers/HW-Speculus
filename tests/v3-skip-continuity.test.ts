@@ -119,7 +119,7 @@ describe('V3 immediate continuity guarantee', () => {
     expect(compiled.prompt).toContain('LATEST COMMITTED TURN / NARRATIVE FRONTIER');
     expect(compiled.prompt).toContain('SKIPTAIL');
     expect(compiled.prompt).toContain('This exchange is the current narrative frontier');
-    expect(compiled.prompt).toContain('SKIP TURN CONTINUITY RULES / HIGHEST NARRATIVE PRIORITY');
+    expect(compiled.prompt).toContain('Skip continuity: continue from the end of the latest committed exchange');
     expect(compiled.prompt).toContain(latest.id);
   });
 

@@ -54,9 +54,8 @@ describe('V3 experimental protocol isolation', () => {
     const next = await generateV2Turn(value, new RagnaProvider(), { skipAsActorId: 'character:ragna' });
     const turn = next.turns.at(-1)!;
     expect(skippedPersonaActorId(turn.player)).toBe('character:ragna');
-    expect(turn.diagnostics.prompt).toContain('selected Ragna Holt as the next acting NPC');
-    expect(turn.diagnostics.prompt).toContain('Write only Ragna Holt\'s next immediate meaningful beat');
-    expect(turn.diagnostics.prompt).toContain('do not complete a full back-and-forth exchange');
+    expect(turn.diagnostics.prompt).toContain('Skip turn: write only Ragna Holt');
+    expect(turn.diagnostics.prompt).toContain('No full exchange, no player invention');
     expect(turn.diagnostics.subjectActorId).toBe('character:ragna');
     expect(next.draft).toBe('');
   });

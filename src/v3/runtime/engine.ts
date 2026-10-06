@@ -7,6 +7,7 @@ import { rollbackTurnOwnedActions, settingsSchema, type V2Diagnostics, type V2Se
 import { SKIPPED_PERSONA_TURN, isSkippedPersonaTurn, skippedPersonaActorId, skippedPersonaTurnAs } from './turn-control';
 import { deriveStateProposals } from './state-review';
 import { approximateV2OutputTokens, countV2Paragraphs, normalizeV2Paragraphs } from './paragraphs';
+import { detectV3ProseSlop, needsV3ProseRepair, v3ProseRepairPrompt } from './prose-quality';
 
 export type EnginePhase = 'resolve' | 'context' | 'generate' | 'validate' | 'commit';
 export class V2DraftRejected extends Error {
@@ -132,7 +133,7 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   options.onPhase?.('context');
   const compiled = compileV2Context(resolvedSession, player, skipPersona ? 'skip-persona' : 'normal', resolved.resolution);
   options.onPhase?.('generate');
-  const result = await provider.generate({
+  let result = await provider.generate({
     prompt: compiled.prompt, model: workingSession.launch.model,
     temperature: settings.temperature, maxTokens: settings.maxTokens, topK: settings.topK, topP: settings.topP,
     presencePenalty: settings.presencePenalty, frequencyPenalty: settings.frequencyPenalty,
@@ -140,6 +141,39 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
     continueToEndOfSentence: settings.continueToEndOfSentence, reroll: options.reroll, signal: options.signal,
   });
   if (options.signal?.aborted) throw new Error('Generation cancelled. No turn or state was committed.');
+  const initialDecoded = stripV3ProtocolArtifacts(decodeV2SerializedRoleplayArtifacts(result.text.trim()));
+  const initialSlopHits = detectV3ProseSlop(initialDecoded);
+  const truncated = result.metadata.completionStatus === 'max_tokens';
+  const proseRepairNeeded = needsV3ProseRepair(initialSlopHits);
+  const repairedReasons: string[] = [];
+  if (truncated || proseRepairNeeded) {
+    if (truncated) repairedReasons.push('hard-ceiling truncation');
+    if (proseRepairNeeded) repairedReasons.push(`${initialSlopHits.length} stock prose constructions`);
+    const firstDurationMs = result.metadata.durationMs;
+    result = await provider.generate({
+      prompt: v3ProseRepairPrompt({
+        originalPrompt: compiled.prompt,
+        draft: initialDecoded,
+        targetTokens: compiled.outputContract.targetMaxTokens,
+        hardLimitTokens: compiled.outputContract.ceilingTokens,
+        truncated,
+        hits: initialSlopHits,
+      }),
+      model: workingSession.launch.model,
+      temperature: Math.min(settings.temperature, 0.65),
+      maxTokens: settings.maxTokens,
+      topK: settings.topK,
+      topP: settings.topP,
+      presencePenalty: 0,
+      frequencyPenalty: 0,
+      stopSequences: [...settings.stopSequences],
+      continueToEndOfSentence: false,
+      reroll: false,
+      signal: options.signal,
+    });
+    result = { ...result, metadata: { ...result.metadata, durationMs: firstDurationMs + result.metadata.durationMs } };
+    if (options.signal?.aborted) throw new Error('Generation cancelled. No turn or state was committed.');
+  }
   options.onPhase?.('validate');
   const rawReply = result.text.trim();
   const rawIssues = validateV2Reply(rawReply, workingSession.launch.persona.name);
@@ -158,6 +192,10 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
     issues.push('The provider reached the hard output ceiling. The cut-off reply was discarded instead of being committed.');
   }
   const warnings = ['Semantic canon claim validation is not complete. Generated prose remains downstream of and non-authoritative over physical state.'];
+  const remainingSlopHits = detectV3ProseSlop(normalizedReply);
+  if (needsV3ProseRepair(remainingSlopHits)) {
+    warnings.push(`The bounded repair still contains structural prose repetition (${remainingSlopHits.map((hit) => hit.label).join(', ')}); no further rewrite was attempted.`);
+  }
   if (resolved.resolution.deferredClaims.length) warnings.push(...resolved.resolution.deferredClaims);
   if (skipPersona) {
     const skippedActorName = skipAsActorId
@@ -172,6 +210,7 @@ export async function generateV2Turn(session: V2Session, provider: ProviderAdapt
   if (sanitizedReply !== decodedReply) warnings.push('Legacy Speculus turn/control markers were stripped before commit.');
   if (canNormalize && roleplayNormalized !== sanitizedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
   if (paragraphPass.applied) warnings.push(`Paragraph readability pass inserted ${paragraphPass.splitParagraphs} paragraph break(s). Wording was not changed.`);
+  if (repairedReasons.length) warnings.push(`One bounded prose repair was used for ${repairedReasons.join(' and ')}.`);
   if (compiled.omitted.length) warnings.push('Some history/canon was omitted. Inspect the Context tab for the exact list.');
   const at = options.now ?? Date.now();
   let relationships = relationshipBase;

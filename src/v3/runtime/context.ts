@@ -2,6 +2,7 @@ import { getRelationship } from '../../runtime/relationships/core';
 import type { V2Session, V2Turn } from './session';
 import type { V2TurnResolution } from './resolution';
 import { selectV3ContextBlocks, type V3ContextBlock } from './context-blocks';
+import { V3_ANTI_SLOP_GUIDANCE } from './prose-quality';
 import { isSkippedPersonaTurn, skippedPersonaActorId } from './turn-control';
 import { assetsFor, perceptionFor, worldClock } from './world';
 
@@ -344,11 +345,17 @@ export type V3OutputContract = {
  */
 export function outputContractFor(preset: V3OutputPreset, envelope: { hardLimitTokens: number; targetTokens: number }): V3OutputContract {
   const base = { preset, ceilingTokens: envelope.hardLimitTokens, paragraphs: '', emphasis: [] as string[] };
+  const boundedRange = (targetMinTokens: number, targetMaxTokens: number) => {
+    const boundedMax = Math.max(16, Math.min(targetMaxTokens, envelope.targetTokens));
+    return {
+      targetMaxTokens: boundedMax,
+      targetMinTokens: Math.max(16, Math.min(targetMinTokens, boundedMax)),
+    };
+  };
   if (preset === 'short') {
     return {
       ...base,
-      targetMinTokens: 80,
-      targetMaxTokens: 160,
+      ...boundedRange(80, 160),
       paragraphs: 'usually 1-2 short paragraphs',
       emphasis: [
         'Write one immediate action, reaction, or dialogue beat and stop.',
@@ -360,8 +367,7 @@ export function outputContractFor(preset: V3OutputPreset, envelope: { hardLimitT
   if (preset === 'long') {
     return {
       ...base,
-      targetMinTokens: 450,
-      targetMaxTokens: 800,
+      ...boundedRange(450, 800),
       paragraphs: 'usually 4-7 readable paragraphs',
       emphasis: [
         'Develop deeper description, reactions and atmosphere around the current beat.',
@@ -372,8 +378,7 @@ export function outputContractFor(preset: V3OutputPreset, envelope: { hardLimitT
   if (preset === 'marathon') {
     return {
       ...base,
-      targetMinTokens: 900,
-      targetMaxTokens: 1600,
+      ...boundedRange(900, 1600),
       paragraphs: 'several readable paragraphs',
       emphasis: [
         'MARATHON means write substantially more about the current playable beat. Expand DEPTH, not TIME.',
@@ -386,8 +391,7 @@ export function outputContractFor(preset: V3OutputPreset, envelope: { hardLimitT
   return {
     ...base,
     preset: 'normal',
-    targetMinTokens: 220,
-    targetMaxTokens: 400,
+    ...boundedRange(220, 400),
     paragraphs: 'usually 2-4 readable paragraphs',
     emphasis: [
       'Deliver one immediate playable beat with moderate description.',
@@ -396,12 +400,8 @@ export function outputContractFor(preset: V3OutputPreset, envelope: { hardLimitT
 }
 
 const readabilityRules = [
-  'OUTPUT STRUCTURE / READABILITY RULES:',
-  'Use short, readable paragraphs. Do not output a single giant prose block.',
-  'Prefer a blank line between natural roleplay paragraphs.',
-  'A paragraph should normally contain one coherent action, observation, dialogue beat, or a tightly related combination.',
-  'Separate dialogue from substantial narration or action when practical.',
-  'Do not add headings, bullet lists, speaker labels, or out-of-character formatting.',
+  'Use short paragraphs. No giant prose blocks. Prefer a blank line between natural roleplay paragraphs.',
+  'No headings, bullet lists, speaker labels, or out-of-character formatting.',
 ];
 
 export function compileV2Context(
@@ -432,73 +432,41 @@ export function compileV2Context(
       : resolution?.subjectPerception ?? (subjectActorId ? perceptionFor(world, subjectActorId) : null);
 
   const outputRules = [
-    `SELECTED OUTPUT PRESET: ${outputContract.preset.toUpperCase()}. This preset name is the active writing contract, not a suggestion.`,
-    `The provider hard ceiling is ${outputEnvelope.hardLimitTokens} tokens. This is an emergency ceiling, never a target.`,
-    `Aim to finish the complete turn between about ${outputContract.targetMinTokens} and ${outputContract.targetMaxTokens} tokens. This range is the desired response shape, not merely a maximum.`,
-    `Structure the response as ${outputContract.paragraphs}.`,
-    ...outputContract.emphasis,
-    'A non-empty roleplay response is required. Do not stop or emit end-of-sequence before producing the requested prose.',
-    'Near the target, finish the current immediate beat and stop. Do not begin a new sentence, paragraph, action, or dialogue exchange merely because budget remains.',
-    'Never trade a complete ending for extra description. Every opened quote, asterisk-delimited action, or bracketed inner voice must be closed before stopping.',
-    'Ending naturally well below the hard ceiling is correct. Do not pad the response to consume the allowance.',
+    `PRESET: ${outputContract.preset.toUpperCase()}. Target ~${outputContract.targetMaxTokens} tokens, hard ceiling ${outputEnvelope.hardLimitTokens} tokens.`,
+    'Finish the current beat naturally. Close all quotes/actions/brackets before stopping. Do not pad or start a new exchange.',
+    ...V3_ANTI_SLOP_GUIDANCE,
   ];
 
   const instructions = impersonatingPersona ? [
-    'SPECULUS V3 EXPERIMENTAL / PLAYER PERSONA IMPERSONATION CONTRACT',
-    `Write only the next in-world turn for the player persona ${launch.persona.name}. This is an explicit operator-requested impersonation of the player persona only.`,
-    'Do not write, continue, react for, or impersonate the character or simulation narrator. Their next turn belongs to the normal renderer after the player draft is sent.',
-    'The engine owns physical locations, elapsed time, simulation day, time of day, day phase and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
-    'Do not invent named places, teleport actors, advance the clock, close the scene, or alter engine state.',
-    'Use only information available to the player persona from authored persona data, current scene state, current perception and the visible recent exchange.',
-    'Derived chronicle/archive memory is context only. It may remind you of prior committed events but never overrides current engine state or current Orbis canon.',
-    'Write only in-world roleplay: dialogue in double quotes, action/narration in single asterisks, inner voice in square brackets.',
-    'Use real roleplay punctuation and real line breaks. Do not serialize the response as JSON or escape its punctuation.',
-    `Begin directly with ${launch.persona.name}'s action, dialogue, or inner voice. Do not prefix a speaker name, role label, heading, explanation, or menu.`,
-    'Stop when the player persona turn is complete. Do not generate the other side of the exchange.',
+    'IMPERSONATION CONTRACT: write only the next in-world turn for the player persona. Do not write for the character or narrator.',
+    'Use authored persona data, current scene state, current perception, and visible recent exchange only. Chronicle/archive is context, not override.',
+    'Roleplay only: dialogue in double quotes, action/narration in single asterisks, inner voice in square brackets. No JSON, no OOC, no menus.',
+    `Begin directly with ${launch.persona.name}'s action, dialogue, or inner voice. Do not prefix a speaker name or heading.`,
+    'Stop when this single player beat is complete. Do not generate the other side.',
     ...outputRules,
     ...readabilityRules,
   ].join('\n') : [
-    'SPECULUS V3 EXPERIMENTAL / PLAYER-PERSPECTIVE WORLD RENDERING CONTRACT',
-    'Render the current simulated world through the player persona\'s perceptual viewpoint. The authorized subject may act, but the prose camera belongs to the player.',
-    'The renderer is downstream from world resolution. It may describe state and observable consequences, but it is not allowed to make generated prose authoritative state.',
-    'The engine owns physical locations, elapsed time, simulation day, time of day, day phase and actor presence. Unknown means unknown, not permission to fill in authoritative state.',
-    'Do not invent named places, teleport actors, independently advance the clock or day, close the scene, or write actions, thoughts, dialogue, consent, decisions or movement for the player.',
-    'When TURN RESOLUTION reports elapsed time, travel or a narrative check, render consequences consistent with that engine result without changing the result.',
-    'If resolved travel arrives during dusk, evening, night, dawn or another clock phase, the environment must match that authoritative phase rather than an earlier prose description.',
-    'Only explicitly present actors can interact. Related canon is not automatically known, perceived or physically present.',
-    'Authorized-subject private context may guide behavior, but must never be exposed as narration unless the player can perceive its outward evidence or already knows it.',
-    'Do not narrate NPC private thoughts, hidden motives, offscreen events or unseen facts as player-visible truth.',
-    'Derived chronicle/archive memory is context only. Current engine state and current Orbis canon always outrank it.',
-    'Authored world and character rules govern behavior. Apply consistency and causality without adding a universal moral personality.',
-    'Write only in-world roleplay: dialogue in double quotes and action/environment narration in single asterisks. Do not invent square-bracket inner voice for NPCs or the player.',
-    'Use real roleplay punctuation and real line breaks. Do not serialize the response as JSON or escape its punctuation.',
-    'Begin directly with an immediate player-observable action, reaction, dialogue or environmental consequence. Do not prefix it with a speaker name, role label, or response heading.',
-    'Do not output engine status, rules, state patches, analysis, headings, menus or a request for the player to choose their next move.',
-    'One generation advances one immediate playable beat, not an entire scene. Do not compress a whole conversation, argument, meal, journey, conflict, or emotional arc into one response.',
-    'Do not close an active topic, summarize its aftermath, announce that tension has eased, or move everyone on to a new activity unless the player or authoritative engine state actually causes that transition.',
-    'When NPCs are talking to each other, do not complete a full back-and-forth exchange in one generation. Prefer one primary NPC action or utterance, with at most a brief immediate reaction from another NPC when coherence requires it, then stop.',
-    'Only redirect attention to the player when the player is directly addressed, must make an immediate decision, or the scene has naturally shifted focus to them. Never manufacture a question or everyone-looks-at-you moment merely to hand control back.',
+    'RENDERING CONTRACT: render the current world through the player persona\'s perceptual viewpoint. The renderer is downstream from engine state.',
+    'Use authored world/character rules and current engine state. Do not invent places, advance time, close scenes, or write player actions/consent/decisions.',
+    'Roleplay only: dialogue in double quotes, action/environment narration in single asterisks. No JSON, no OOC, no NPC inner voice.',
+    'Begin directly with an immediate player-observable action, reaction, dialogue, or environmental consequence. No speaker labels or headings.',
+    'One generation advances one immediate playable beat. Do not compress a whole conversation, argument, meal, journey, or emotional arc into one response.',
     skipAsActor
-      ? `The operator explicitly skipped the player persona turn and selected ${skipAsActor.name} as the next acting NPC. Write only ${skipAsActor.name}'s next immediate meaningful beat. Other NPCs may show a brief observable reaction if necessary, but do not give another NPC a full reply or complete the exchange. Do not invent any player action, dialogue, thought, consent, decision or movement.`
+      ? `Skip turn: write only ${skipAsActor.name}'s next immediate beat. No full exchange, no player invention.`
       : skippingPersona
-        ? 'The operator explicitly skipped the player persona turn. Continue one immediate beat from current resolved state and do not invent any player action, dialogue, thought, consent, decision or movement.'
-        : 'Player input describes an attempt or utterance. It is evidence for resolution, not permission for the renderer to rewrite canon or engine state.',
+        ? 'Skip turn: continue one immediate beat from resolved state. No player invention.'
+        : 'Player input is evidence for resolution, not permission to rewrite canon or engine state.',
     ...(skippingPersona ? [
-      'SKIP TURN CONTINUITY RULES / HIGHEST NARRATIVE PRIORITY:',
-      'Continue directly from the end of the latest committed exchange in the IMMEDIATE CONTINUITY block below. That exchange is the current narrative frontier. Older chronicle or archive material is background only and must never replace or supersede it.',
-      'Do not reinterpret an earlier player turn, replay a resolved outcome, or resurrect a closed older beat.',
-      'Do not treat chronicle/archive memory as the current scene. Continue from the final state and final prose of the newest committed turn.',
-      'One skip advances exactly one immediate NPC/world beat. Never simulate the next several minutes of play.',
-      'No authoritative time advancement unless an engine mechanic explicitly performed it in TURN RESOLUTION above.',
-      'Never invent a player action, speech, thought, consent, decision, or movement.',
+      'Skip continuity: continue from the end of the latest committed exchange. Older material is background only.',
+      'One skip advances exactly one beat. No time advancement unless engine mechanics performed it.',
     ] : []),
     ...outputRules,
     ...readabilityRules,
     skipAsActor
-      ? `Authorized subject for this turn: ${skipAsActor.name}. Render only ${skipAsActor.name}'s next immediate beat and only its outward result available to ${launch.persona.name}.`
+      ? `Authorized subject: ${skipAsActor.name}. Render only their outward result.`
       : launch.character
-        ? `Authorized subject for behavior: ${launch.character.name}. Render only the outward result available to ${launch.persona.name}.`
-        : `You are the simulation narrator. Render only what ${launch.persona.name} can perceive or already knows.`,
+        ? `Authorized subject: ${launch.character.name}. Render only their outward result.`
+        : `You are the simulation narrator. Render only what ${launch.persona.name} can perceive or knows.`,
   ].join('\n');
 
   const blocks: V3ContextBlock[] = [
