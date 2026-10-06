@@ -6,4 +6,4 @@ export type DetachedTranscriptMessage =
   | { type: 'probe'; sessionId: string }
   | { type: 'ready'; sessionId: string }
   | { type: 'closed'; sessionId: string }
-  | { type: 'state'; sessionId: string; session: V4Session; busy: boolean };
+  | { type: 'state'; sessionId: string; branchId: string; sequence: number; session: V4Session; busy: boolean };

@@ -2,12 +2,14 @@ import type { ProviderAdapter } from '../../runtime/providers/types';
 import { commitRelationshipEvent, getRelationship, removeRelationshipTurns } from '../../runtime/relationships/core';
 import { heuristicRelationshipScorer } from '../../runtime/relationships/evaluator';
 import { compileV4Context } from './context';
-import { resolveV4PlayerTurn } from './resolution';
+import { resolveV4PlayerTurn, type V4TurnResolution } from './resolution';
 import { rollbackTurnOwnedActions, settingsSchema, type V4Diagnostics, type V4Session, type V4Turn } from './session';
 import { SKIPPED_PERSONA_TURN, isSkippedPersonaTurn, skippedPersonaActorId, skippedPersonaTurnAs } from './turn-control';
 import { deriveStateProposals } from './state-review';
 import { approximateV4OutputTokens, countV4Paragraphs, normalizeV4Paragraphs } from './paragraphs';
 import { detectV4ProseSlop, needsV4ProseRepair, v4ProseRepairPrompt } from './prose-quality';
+import { resolutionSchema, sameState } from './boundaries';
+import { assertWorldCanon } from './world';
 
 export type EnginePhase = 'resolve' | 'context' | 'generate' | 'validate' | 'commit';
 export class V4DraftRejected extends Error {
@@ -92,9 +94,14 @@ export function validateV4Reply(text: string, playerName = '') {
   return issues;
 }
 
-export async function generateV4Turn(session: V4Session, provider: ProviderAdapter, options: {
+export type V4GenerationOptions = {
   reroll?: boolean; skipPersona?: boolean; skipAsActorId?: string; signal?: AbortSignal; onPhase?: (phase: EnginePhase) => void; now?: number;
-} = {}): Promise<V4Session> {
+  turnId?: string;
+  recordedResolution?: { resolution: V4TurnResolution; resolvedSession: V4Session };
+  onCheckpoints?: (checkpoints: { before: V4Session; resolved: V4Session; after: V4Session; resolution: V4TurnResolution }) => void;
+};
+
+export async function generateV4Turn(session: V4Session, provider: ProviderAdapter, options: V4GenerationOptions = {}): Promise<V4Session> {
   const settings = settingsSchema.parse(session.settings);
   if (options.signal?.aborted) throw new Error('Generation cancelled. No provider call was made.');
   if (session.launch.expiresAt <= Date.now()) throw new Error('V4 authorization expired. Relaunch from Orbis, then import your V4 or compatible V3 export.');
@@ -121,13 +128,22 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   const base = options.reroll
     ? { ...workingSession, turns: workingSession.turns.slice(0, -1), relationships: relationshipBase }
     : { ...workingSession, relationships: relationshipBase };
-  const id = options.reroll ? last!.id : `v4:${workingSession.id}:${workingSession.nextTurn}`;
+  const id = options.reroll ? last!.id : options.turnId ?? `v4:${crypto.randomUUID()}`;
+  if (!options.reroll && workingSession.turns.some((turn) => turn.id === id)) throw new Error('Turn identity already exists.');
   const relationshipBefore = characterPrimary
     ? getRelationship(relationshipBase, workingSession.launch.character!.id, workingSession.launch.persona.id)
     : null;
 
   options.onPhase?.('resolve');
-  const resolved = resolveV4PlayerTurn(base, player, { skipPersona, reroll: options.reroll });
+  const resolved = options.recordedResolution
+    ? { session: structuredClone(options.recordedResolution.resolvedSession), resolution: resolutionSchema.parse(options.recordedResolution.resolution) }
+    : resolveV4PlayerTurn(base, player, { skipPersona, reroll: options.reroll });
+  if (resolved.session.id !== base.id || resolved.resolution.worldRevisionAfter !== resolved.session.world.revision
+    || (options.recordedResolution && (resolved.resolution.worldRevisionBefore !== base.world.revision
+      || !sameState({ ...resolved.session, world: base.world }, base)))) {
+    throw new Error('Recorded resolution does not match the generation boundary.');
+  }
+  assertWorldCanon(resolved.session.world, base.launch);
   const resolvedSession = resolved.session;
 
   options.onPhase?.('context');
@@ -293,6 +309,7 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   if (issues.length) throw new V4DraftRejected(`Draft rejected: ${issues.join(' ')}`, diagnostics);
   const turn: V4Turn = { id, player, reply: normalizedReply, createdAt: options.reroll ? last!.createdAt : at, worldRevision: resolvedSession.world.revision, diagnostics };
   options.onPhase?.('commit');
+  if (options.signal?.aborted) throw new Error('Generation cancelled. No turn or state was committed.');
   const resolutionEvent = !options.reroll && resolvedSession.world.revision !== base.world.revision
     ? {
       id: `${id}:resolution`, kind: 'operator' as const,
@@ -306,7 +323,7 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
     ...deriveStateProposals({ ...resolvedSession, relationships, stateProposals: proposalBase }, id, normalizedReply),
   ];
 
-  return {
+  const committed: V4Session = {
     ...resolvedSession, draft: options.reroll || skipPersona ? workingSession.draft : '', turns: [...resolvedSession.turns, turn],
     nextTurn: workingSession.nextTurn + (options.reroll ? 0 : 1),
     relationships,
@@ -330,4 +347,6 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
         ownerTurnId: null,
       }],
   };
+  options.onCheckpoints?.(structuredClone({ before: base, resolved: resolvedSession, after: committed, resolution: resolved.resolution }));
+  return committed;
 }

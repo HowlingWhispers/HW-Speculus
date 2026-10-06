@@ -12,7 +12,10 @@ function RoleplayText({ text }: { text: string }) {
           : <span key={index}>{part}</span>)}</>;
 }
 
-export function V4Transcript({ session, busy, speech }: { session: V4Session; busy: boolean; speech?: ReturnType<typeof useSpeechSynthesis> }) {
+export function V4Transcript({ session, busy, speech, onFork, canFork }: {
+  session: V4Session; busy: boolean; speech?: ReturnType<typeof useSpeechSynthesis>;
+  onFork?: (turnId: string) => void; canFork?: (turnId: string) => boolean;
+}) {
   const scroll = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   useEffect(() => {
@@ -43,6 +46,7 @@ export function V4Transcript({ session, busy, speech }: { session: V4Session; bu
         ? <article className="v2-message v2-player v2-skipped-turn"><header>Player / {session.launch.persona.name}<span>Turn {String(index + 1).padStart(3, '0')}</span></header><div className="v2-skip-note">Persona turn skipped by operator</div></article>
         : <article className="v2-message v2-player"><header>Player / {session.launch.persona.name}<span>Turn {String(index + 1).padStart(3, '0')}</span></header><div className="v2-prose"><RoleplayText text={turn.player} /></div></article>}
       <article className="v2-message"><header>{subject}<span>State r{turn.worldRevision}</span></header><div className="v2-prose"><RoleplayText text={turn.reply} /></div>
+        {onFork && <button type="button" disabled={busy || !canFork?.(turn.id)} onClick={() => onFork(turn.id)}>Fork after turn {index + 1}</button>}
         {speech && !isSkippedPersonaTurn(turn.player) && <div className="v4-speech-controls">
           <button type="button" aria-label="Speak reply" disabled={!speech.supported || !session.settings.speechEnabled || busy} onClick={() => speech.speak(turn.reply, { rate: session.settings.speechRate, voiceUri: session.settings.speechVoiceUri })}>Speak</button>
           <button type="button" aria-label="Stop speech" disabled={!speech.speaking} onClick={speech.stop}>Stop</button>

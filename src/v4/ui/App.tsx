@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseV4ClientPackage, type V4ClientPackage } from '../contracts/launch';
 import { V4BrowserProvider } from '../providers/browser';
-import { generateV4Turn, V4DraftRejected, type EnginePhase } from '../runtime/engine';
+import { V4DraftRejected, type EnginePhase } from '../runtime/engine';
 import { generateV4PersonaDraft } from '../runtime/persona-draft';
-import { retractLatestTurnFromStudium, submitLatestTurnToStudium } from '../research/studium';
-import { createV4Session, deleteLastTurn, operateWorld, type V4Diagnostics, type V4Session } from '../runtime/session';
+import { submitLatestTurnToStudium } from '../research/studium';
+import { createV4Session, operateWorld, type V4Diagnostics, type V4Session } from '../runtime/session';
 import { acceptStateProposal, rejectStateProposal } from '../runtime/state-review';
-import { loadLatestV4LocalAutosave, saveV4LocalAutosave } from '../storage/autosave';
-import { exportV4Session, importV4Session, inspectV4Session, loadV4Session, MAX_V4_FILE_BYTES, saveV4Session, v4ExportFilename } from '../storage/session';
+import { loadLatestV4LocalAutosave } from '../storage/autosave';
+import { inspectV4Session, loadV4Session, MAX_V4_FILE_BYTES } from '../storage/session';
+import { exportBranch, importBranchFile, inspectBranchFile, branchExportFilename } from '../storage/branch-transfer';
+import { loadV4Authorization, saveV4Authorization } from '../storage/authorization';
 import { detachedTranscriptChannelName, type DetachedTranscriptMessage } from './detached-channel';
 import { openFloatingReader, openSideReader, supportsFloatingReader } from './reader-window';
 import { usePhoneLayout } from './usePhoneLayout';
@@ -17,6 +19,11 @@ import { SettingsPanel } from './SettingsPanel';
 import { V4Transcript } from './Transcript';
 import { useSpeechSynthesis } from './useSpeechSynthesis';
 import { isSkippedPersonaTurn } from '../runtime/turn-control';
+import { BranchImportCollision, useBranchController } from './useBranchController';
+import { BranchSwitcher } from './BranchSwitcher';
+import { forkBranch } from '../runtime/branches';
+import type { V4Branch } from '../runtime/branches';
+import { loadActiveBranch } from '../storage/branches';
 
 const PIPELINE_STEPS = ['resolve', 'context', 'generate', 'validate', 'commit'] as const;
 const PENDING_IMPORT_KEY = 'speculus.pending-import.v4';
@@ -39,6 +46,7 @@ const messageOf = (error: unknown) => error instanceof Error ? error.message : '
 
 export function V4App() {
   const [session, setSession] = useState<V4Session | null>(null);
+  const [composerDraft, setComposerDraft] = useState('');
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState('');
   const [storageError, setStorageError] = useState('');
@@ -46,6 +54,7 @@ export function V4App() {
   const [phaseSeen, setPhaseSeen] = useState<EnginePhase[]>([]);
   const [importing, setImporting] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSaveIdentity | null>(null);
+  const [recoveryBranch, setRecoveryBranch] = useState<V4Branch | null>(null);
   const importLock = useRef(false);
   const [importRevision, setImportRevision] = useState(0);
   const [rejected, setRejected] = useState<V4Diagnostics | null>(null);
@@ -66,11 +75,34 @@ export function V4App() {
   const floatingReaderSupported = supportsFloatingReader();
   const speech = useSpeechSynthesis();
   const { stop: stopSpeech } = speech;
+  const branchController = useBranchController(setSession);
+  const adoptImported = async (candidate: V4Branch, receiving: V4Session) => {
+    try { return await branchController.importBranch(candidate, receiving); }
+    catch (cause) {
+      if (!(cause instanceof BranchImportCollision)) throw cause;
+      if (!window.confirm(`Replace the exact saved branch ${cause.branchId} with this imported content? Other branches will not change.`)) {
+        throw new Error('Import cancelled. The existing branch was not changed.');
+      }
+      return branchController.importBranch(candidate, receiving, true);
+    }
+  };
+  const [readerConnectionId] = useState(() => crypto.randomUUID());
+  const readerSequence = useRef(0);
+  const liveBranchId = useRef<string | null>(null);
+  liveBranchId.current = branchController.branch?.branchId ?? null;
+  const readerSession = (value: V4Session): V4Session => ({ ...value, launch: { ...value.launch, launchId: 'detached-reader', expiresAt: 0 } });
+  const update = (transform: (value: V4Session) => V4Session, label: string, sourceTurnId?: string) => {
+    const turn = branchController.branch?.turns.find((value) => value.id === sourceTurnId);
+    const source = turn ? { turnId: turn.id, pageId: turn.activePageId } : undefined;
+    void branchController.update(transform, label, source).then(() => setStorageError('')).catch((cause) => setStorageError(messageOf(cause)));
+  };
 
   useEffect(() => {
     if (!session?.settings.speechEnabled) stopSpeech();
   }, [session?.settings.speechEnabled, stopSpeech]);
   useEffect(() => { stopSpeech(); }, [session?.id, stopSpeech]);
+  useEffect(() => { stopSpeech(); }, [branchController.branch?.branchId, stopSpeech]);
+  useEffect(() => { setComposerDraft(session?.draft ?? ''); }, [branchController.branch?.branchId]);
 
   const notePhase = (next: EnginePhase) => {
     setPhase(next);
@@ -89,7 +121,9 @@ export function V4App() {
     void (async () => {
       try {
         const claimed = code ? await claimPackage(code) : null;
-        let next = claimed ? createV4Session(claimed.package) : loadV4Session();
+        const storedLaunch = claimed ? null : loadV4Authorization();
+        let next = claimed ? createV4Session(claimed.package) : storedLaunch ? createV4Session(storedLaunch) : loadV4Session();
+        let imported: V4Branch | null = null;
         if (code && next) {
           let pending = claimed?.resumeSave === undefined ? sessionStorage.getItem(PENDING_IMPORT_KEY) : JSON.stringify(claimed.resumeSave);
           if (!pending) {
@@ -102,8 +136,7 @@ export function V4App() {
           }
           if (pending) {
             try {
-              next = importV4Session(pending, next);
-              sessionStorage.removeItem(PENDING_IMPORT_KEY);
+              imported = importBranchFile(pending, next.launch);
             } catch (cause) {
               setError(`The staged save was not loaded: ${messageOf(cause)}`);
             }
@@ -111,7 +144,18 @@ export function V4App() {
         }
         if (active && next) {
           if (code) window.history.replaceState({}, '', window.location.pathname);
-          setSession(next);
+          if (imported) {
+            await adoptImported(imported, next);
+            sessionStorage.removeItem(PENDING_IMPORT_KEY);
+          } else await branchController.initialize(next, true);
+        } else if (active) {
+          const saved = await loadActiveBranch();
+          if (active && saved) {
+            setRecoveryBranch(saved.branch);
+            const source = saved.sourceIdentity;
+            setPendingSave({ id: source.sourceId, type: source.sourceType, revision: source.sourceRevision, name: saved.branch.label,
+              persona: { id: source.personaId, name: source.personaId } });
+          }
         }
       } catch (cause) { if (active) setError(messageOf(cause)); }
       finally { if (active) setBooting(false); }
@@ -122,8 +166,7 @@ export function V4App() {
   useEffect(() => {
     if (!session) return;
     try {
-      saveV4Session(session);
-      saveV4LocalAutosave(session);
+      saveV4Authorization(session.launch);
       setStorageError('');
     } catch {
       setStorageError('Local save storage is unavailable or full. Export your session now to preserve it.');
@@ -132,16 +175,16 @@ export function V4App() {
 
   useEffect(() => {
     if (!session || typeof BroadcastChannel === 'undefined') return;
-    const channel = new BroadcastChannel(detachedTranscriptChannelName(session.id));
+    const channel = new BroadcastChannel(detachedTranscriptChannelName(readerConnectionId));
     detachedChannel.current = channel;
     const sendState = () => {
       const current = liveSession.current;
-      if (!current) return;
-      channel.postMessage({ type: 'state', sessionId: current.id, session: current, busy: liveBusy.current } satisfies DetachedTranscriptMessage);
+      if (!current || !liveBranchId.current) return;
+      channel.postMessage({ type: 'state', sessionId: readerConnectionId, branchId: liveBranchId.current, sequence: ++readerSequence.current, session: readerSession(current), busy: liveBusy.current } satisfies DetachedTranscriptMessage);
     };
     channel.onmessage = (event: MessageEvent<DetachedTranscriptMessage>) => {
       const message = event.data;
-      if (!message || message.sessionId !== session.id) return;
+      if (!message || message.sessionId !== readerConnectionId) return;
       if (message.type === 'ready') {
         setTranscriptDetached(true);
         setReaderMode((current) => current === 'inline' ? 'side' : current);
@@ -152,17 +195,17 @@ export function V4App() {
         setReaderMode('inline');
       }
     };
-    channel.postMessage({ type: 'probe', sessionId: session.id } satisfies DetachedTranscriptMessage);
+    channel.postMessage({ type: 'probe', sessionId: readerConnectionId } satisfies DetachedTranscriptMessage);
     return () => {
       channel.close();
       if (detachedChannel.current === channel) detachedChannel.current = null;
     };
-  }, [session?.id]);
+  }, [Boolean(session), readerConnectionId]);
 
   useEffect(() => {
-    if (!session || !transcriptDetached) return;
-    detachedChannel.current?.postMessage({ type: 'state', sessionId: session.id, session, busy } satisfies DetachedTranscriptMessage);
-  }, [session, busy, transcriptDetached]);
+    if (!session || !transcriptDetached || !branchController.branch) return;
+    detachedChannel.current?.postMessage({ type: 'state', sessionId: readerConnectionId, branchId: branchController.branch.branchId, sequence: ++readerSequence.current, session: readerSession(session), busy } satisfies DetachedTranscriptMessage);
+  }, [session, branchController.branch, busy, transcriptDetached, readerConnectionId]);
 
   useEffect(() => {
     if (!transcriptDetached) return;
@@ -181,11 +224,12 @@ export function V4App() {
     const active = new AbortController();
     controller.current = active; setError(''); setRejected(null); setPhaseSeen([]);
     try {
-      const next = await generateV4Turn(session, new V4BrowserProvider(session.launch.launchId), {
-        reroll, skipPersona, skipAsActorId, signal: active.signal, onPhase: notePhase,
+      if (reroll) throw new Error('Alternative pages require a verified branch boundary.');
+      const next = await branchController.generate(new V4BrowserProvider(session.launch.launchId), {
+        skipPersona, skipAsActorId, signal: active.signal, onPhase: notePhase,
       });
       if (!active.signal.aborted) {
-        setSession(next);
+        setComposerDraft(next.draft);
         const latest = next.turns.at(-1);
         if (next.settings.speechEnabled && latest && !isSkippedPersonaTurn(latest.player)) {
           speech.speak(latest.reply, { rate: next.settings.speechRate, voiceUri: next.settings.speechVoiceUri });
@@ -206,7 +250,10 @@ export function V4App() {
       const draft = await generateV4PersonaDraft(session, new V4BrowserProvider(session.launch.launchId), {
         signal: active.signal, onPhase: notePhase,
       });
-      if (!active.signal.aborted) setSession({ ...session, draft });
+      if (!active.signal.aborted) {
+        await branchController.update((value) => ({ ...value, draft }), 'persona-draft');
+        setComposerDraft(draft);
+      }
     } catch (cause) {
       setError(active.signal.aborted ? 'Cancelled. The player composer was unchanged.' : messageOf(cause));
     } finally { controller.current = null; setPhase(null); }
@@ -226,7 +273,7 @@ export function V4App() {
     }
 
     detachedWindow.current?.close();
-    const popup = openSideReader(session.id, 'speculus-v4-display');
+    const popup = openSideReader(readerConnectionId, 'speculus-v4-display');
     if (!popup) {
       setError('The browser blocked the side reader window. Allow pop-ups for Speculus and try again.');
       setTranscriptDetached(false);
@@ -254,7 +301,7 @@ export function V4App() {
 
     detachedWindow.current?.close();
     try {
-      const popup = await openFloatingReader(session.id);
+      const popup = await openFloatingReader(readerConnectionId);
       detachedWindow.current = popup;
       setReaderMode('floating');
       setTranscriptDetached(true);
@@ -276,11 +323,12 @@ export function V4App() {
     setError('');
   };
 
-  const saveNow = () => {
+  const saveNow = async () => {
     if (!session) return;
     try {
-      saveV4Session(session);
-      saveV4LocalAutosave(session);
+      const saved = await branchController.settle();
+      if (!saved || saved.draft !== composerDraft) throw new Error('The current draft has not been saved.');
+      saveV4Authorization(saved.launch);
       setStorageError('');
       setError('');
     } catch {
@@ -290,7 +338,7 @@ export function V4App() {
 
   const startNewSimulation = () => {
     if (!session || busy) return;
-    if (!window.confirm('Start a new simulation with this Orbis package? The current working session will be replaced by the new autosave. Export it first if you want to keep it.')) return;
+    if (!window.confirm('Start a new story with this Orbis package? Your existing saved stories and branches will remain available.')) return;
     controller.current?.abort();
     detachedWindow.current?.close();
     detachedWindow.current = null;
@@ -302,15 +350,17 @@ export function V4App() {
     setStorageError('');
     setPhaseSeen([]);
     setImportRevision((value) => value + 1);
-    setSession(createV4Session(session.launch));
+    void branchController.initialize(createV4Session(session.launch), false).catch((cause) => setStorageError(messageOf(cause)));
   };
 
-  const download = () => {
-    if (!session) return;
+  const download = async () => {
     try {
-      const url = URL.createObjectURL(new Blob([exportV4Session(session)], { type: 'application/json' }));
+      await branchController.settle();
+      const selected = branchController.currentBranch() ?? recoveryBranch;
+      if (!selected) return;
+      const url = URL.createObjectURL(new Blob([exportBranch(selected, session?.launch)], { type: 'application/json' }));
       const anchor = document.createElement('a'); anchor.href = url;
-      anchor.download = v4ExportFilename(session);
+      anchor.download = branchExportFilename(selected);
       anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (cause) { setError(messageOf(cause)); }
   };
@@ -320,10 +370,10 @@ export function V4App() {
     if (file.size > MAX_V4_FILE_BYTES) { setError('V4 imports are limited to 16 MB.'); return; }
     importLock.current = true; setImporting(true);
     try {
-      const next = importV4Session(await file.text(), session);
-      if (!window.confirm('Replace this V4 session with the imported transcript and state? Export the current session first if you want to keep it. V1 is unaffected.')) return;
+      const next = importBranchFile(await file.text(), session.launch);
+      if (!window.confirm('Open the imported branch? Existing stories and other branches remain saved.')) return;
       stopSpeech();
-      setSession(next); setImportRevision((value) => value + 1); setRejected(null); setError('');
+      await adoptImported(next, session); setImportRevision((value) => value + 1); setRejected(null); setError('');
     } catch (cause) { setError(messageOf(cause)); }
     finally { importLock.current = false; setImporting(false); if (fileInput.current) fileInput.current.value = ''; }
   };
@@ -333,7 +383,10 @@ export function V4App() {
     if (file.size > MAX_V4_FILE_BYTES) { setError('V4 imports are limited to 16 MB.'); return; }
     try {
       const raw = await file.text();
-      const identity = inspectV4Session(raw);
+      const inspected = inspectBranchFile(raw);
+      const identity: PendingSaveIdentity = { ...inspected,
+        persona: { id: inspected.persona.id, name: inspected.persona.id },
+        character: inspected.character ? { id: inspected.character.id, name: inspected.character.id } : null };
       sessionStorage.setItem(PENDING_IMPORT_KEY, raw);
       setPendingSave(identity);
       setError('');
@@ -357,22 +410,30 @@ export function V4App() {
       {(['main', 'setup', 'diagnostics'] as const).map((tab) => <button key={tab} type="button" aria-pressed={phoneTab === tab} onClick={() => setPhoneTab(tab)}>{tab === 'main' ? 'Main' : tab === 'setup' ? 'Setup' : 'Diagnostics'}</button>)}
       <button type="button" disabled={busy} onClick={() => {
         try {
-          saveV4Session(session);
-          saveV4LocalAutosave(session);
+          saveV4Authorization(session.launch);
           window.location.assign(`https://lib.thehowlingwhispers.com/asset/${encodeURIComponent(session.launch.primaryAsset.id)}`);
         } catch { setPhoneTab('main'); setStorageError('Could not save before leaving. Return to Main and export your session first.'); }
       }}>Back to Orbis</button>
     </nav>}
     {session ? <div data-phone-tab={phoneTab} className={`v2-layout ${showSettings ? '' : 'v2-hide-settings'} ${showDiagnostics ? '' : 'v2-hide-diagnostics'}`}>
-      {(isPhone || showSettings) && <SettingsPanel key={`${session.id}:${importRevision}`} session={session} disabled={busy} speech={speech} onSettings={(patch) => setSession({ ...session, settings: { ...session.settings, ...patch } })} onWorld={(action) => {
-        try { setSession(operateWorld(session, action)); setError(''); }
-        catch (cause) { setError(messageOf(cause)); }
-      }} />}
+      {(isPhone || showSettings) && <SettingsPanel key={`${branchController.branch?.branchId}:${importRevision}`} session={session} disabled={busy} speech={speech} onSettings={(patch) => update((value) => ({ ...value, settings: { ...value.settings, ...patch } }), 'settings')} onWorld={(action) => update((value) => operateWorld(value, action), action.type)} />}
       <section className={`v2-panel v2-simulation ${transcriptDetached ? 'v2-transcript-detached' : ''}`} aria-label="Simulation">
         <header className="v2-panel-heading"><h2>Simulation</h2><span>{session.launch.primaryAsset.name}</span></header>
-        {!transcriptDetached && <V4Transcript session={session} busy={busy} speech={speech} />}
+        {branchController.branch && <BranchSwitcher branches={branchController.branches} activeBranchId={branchController.branch.branchId} disabled={busy} onSwitch={(id) => {
+          stopSpeech();
+          void branchController.switchTo(id).catch((cause) => setStorageError(messageOf(cause)));
+        }} />}
+        {!transcriptDetached && <V4Transcript session={session} busy={busy} speech={speech} onFork={(turnId) => {
+          const previous = branchController.branch;
+          if (!previous) return;
+          try {
+            const candidate = forkBranch(previous, turnId);
+            stopSpeech();
+            void branchController.commit(candidate, previous).catch((cause) => setStorageError(messageOf(cause)));
+          } catch (cause) { setError(messageOf(cause)); }
+        }} canFork={(turnId) => Boolean(branchController.branch?.turns.find((turn) => turn.id === turnId)?.pages.some((page) => page.after))} />}
         <div className="v2-transcript-tools">
-          <button disabled={busy || !session.turns.length || expired || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => void generate(true)}>Reroll latest</button>
+          <button disabled title="Alternative pages are not enabled until the page controller is installed">Reroll latest</button>
           <button disabled={busy || expired} onClick={() => void impersonate()}>Impersonate</button>
           <ToolMenu label="Skip as">
               {skipAsActors.map((actor) => <button key={actor.id} disabled={busy || expired} onClick={() => void generate(false, true, actor.id)}>{actor.name}</button>)}
@@ -380,13 +441,7 @@ export function V4App() {
               {!skipAsActors.length && <button disabled>No NPCs identified</button>}
           </ToolMenu>
           <ToolMenu label="Turn">
-              <button className="v2-delete" disabled={busy || !session.turns.length || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => {
-                if (window.confirm('Remove the latest player/reply pair and its resolved state from this V4 session?')) {
-                  void retractLatestTurnFromStudium(session).catch(() => undefined);
-                  setSession(deleteLastTurn(session));
-                  setRejected(null);
-                }
-              }}>Delete latest</button>
+              <button className="v2-delete" disabled title="History is preserved in durable branches">Delete latest</button>
 
           </ToolMenu>
           <ToolMenu label="Session">
@@ -410,34 +465,42 @@ export function V4App() {
               <small>{proposal.kind} · source {proposal.sourceTurnId}</small>
               <div>
                 <button type="button" disabled={busy} onClick={() => {
-                  try { setSession(acceptStateProposal(session, proposal.id)); setError(''); }
-                  catch (cause) { setError(messageOf(cause)); }
+                  update((value) => acceptStateProposal(value, proposal.id), 'proposal-accepted', proposal.sourceTurnId);
                 }}>Accept</button>
-                <button type="button" disabled={busy} onClick={() => setSession(rejectStateProposal(session, proposal.id))}>Reject</button>
+                <button type="button" disabled={busy} onClick={() => update((value) => rejectStateProposal(value, proposal.id), 'proposal-rejected', proposal.sourceTurnId)}>Reject</button>
               </div>
             </article>)}
           </div>
         </section>}
         {transcriptDetached && <div className="v2-detached-note"><span>{readerMode === 'floating' ? 'Floating reader active' : 'Reader popped out to side'}</span><small>{readerMode === 'floating' ? 'Always-on-top reading display. Closing it restores the transcript here.' : 'Move the reader beside Speculus or onto another monitor. Closing it restores the transcript here.'}</small></div>}
         {(error || storageError || expired) && <div className="v2-fault" role="alert">{storageError || error || 'Authorization expired. Export this session, launch the same record from Orbis, then import the V4 export.'}</div>}
+        {branchController.conflict && <div className="v2-fault" role="alert"><p>Another tab changed this saved branch. Nothing was overwritten.</p>
+          <button type="button" onClick={() => window.location.reload()}>Reload saved state</button>
+          <button type="button" onClick={() => void branchController.preserveConflict().then(() => setStorageError('')).catch((cause) => setStorageError(messageOf(cause)))}>Preserve candidate as new branch</button>
+        </div>}
         <form className="v2-composer" onSubmit={(event) => { event.preventDefault(); void generate(); }}>
-          <textarea aria-label="Your next turn" placeholder="What do you do next?" value={session.draft} maxLength={16000} disabled={busy} onChange={(event) => setSession({ ...session, draft: event.target.value })} onKeyDown={(event) => {
+          <textarea aria-label="Your next turn" placeholder="What do you do next?" value={composerDraft} maxLength={16000} disabled={busy} onChange={(event) => {
+            const draft = event.target.value;
+            setComposerDraft(draft);
+            update((value) => ({ ...value, draft }), 'draft');
+          }} onKeyDown={(event) => {
             if (!isPhone && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
               event.preventDefault();
-              if (!busy && session.draft.trim() && !expired) void generate();
+              if (!busy && composerDraft.trim() && !expired) void generate();
             }
           }} />
-          <div><small>{isPhone ? 'Enter for newline · Tap Send to send' : 'Enter to send · Shift+Enter for newline'}{transcriptDetached ? ' / detached reader live' : ''}</small>{busy ? <button type="button" onClick={() => controller.current?.abort()}>Cancel</button> : <button className="v2-send" disabled={!session.draft.trim() || expired}>Send</button>}</div>
+          <div><small>{isPhone ? 'Enter for newline · Tap Send to send' : 'Enter to send · Shift+Enter for newline'}{transcriptDetached ? ' / detached reader live' : ''}</small>{busy ? <button type="button" onClick={() => controller.current?.abort()}>Cancel</button> : <button className="v2-send" disabled={!composerDraft.trim() || expired}>Send</button>}</div>
         </form>
       </section>
-      {(isPhone || showDiagnostics) && <V4DiagnosticsPanel session={session} rejected={rejected} />}
+      {(isPhone || showDiagnostics) && <V4DiagnosticsPanel session={session} rejected={rejected} branch={branchController.branch} />}
     </div> : <section className="v2-panel v2-boot">
       <span className="v2-eyebrow">V4 / BOOT SEQUENCE</span>
       <h2>{booting ? 'Reading simulation medium...' : pendingSave ? 'Save identified' : 'Open a simulation or load a save'}</h2>
       {booting ? <p role="status">Checking this tab for a launch package or existing V4 session.</p> : pendingSave ? <>
         <p role="status">{pendingSave.name ?? pendingSave.world?.name ?? 'Speculus save'} · {pendingSave.location?.name ?? 'no saved location'} · {pendingSave.persona?.name ?? 'saved persona'}</p>
-        <p>The raw save is staged in this tab. Open its matching Orbis record at revision <strong>{pendingSave.revision}</strong> and choose Simulate. Speculus will consume the staged save automatically after Orbis issues fresh authorization.</p>
+        <p>{recoveryBranch ? 'A durable V4 branch is available without reusable authorization.' : 'The raw save is staged in this tab.'} Open its matching Orbis record at revision <strong>{pendingSave.revision}</strong> and choose Simulate. Speculus will restore the save after Orbis issues fresh authorization.</p>
         <button type="button" onClick={() => rootFileInput.current?.click()}>Choose a different raw save</button>
+        {recoveryBranch && <button type="button" onClick={() => void download()}>Export recovered branch</button>}
       </> : <>
         <p>Start from Orbis as usual, or identify a previously exported V4 save here. Raw saves never contain reusable launch authorization.</p>
         <button type="button" onClick={() => rootFileInput.current?.click()}>Load raw save</button>

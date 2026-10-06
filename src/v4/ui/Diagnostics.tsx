@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { V4_ARCHIVE_TURN_COUNT, V4_CHRONICLE_TURN_COUNT, V4_RECENT_EXCHANGE_COUNT } from '../runtime/context';
 import type { V4Diagnostics, V4Session } from '../runtime/session';
 import { assetsFor, perceptionFor, worldClock } from '../runtime/world';
+import type { V4Branch } from '../runtime/branches';
 
 const tabs = ['state', 'memory', 'domains', 'review', 'context', 'knowledge', 'perception', 'cast', 'provider', 'turns', 'events', 'raw'] as const;
 type Tab = (typeof tabs)[number];
@@ -41,7 +42,7 @@ function providerView(session: V4Session, diagnostic: V4Diagnostics | undefined)
   };
 }
 
-export function V4DiagnosticsPanel({ session, rejected }: { session: V4Session; rejected: V4Diagnostics | null }) {
+export function V4DiagnosticsPanel({ session, rejected, branch }: { session: V4Session; rejected: V4Diagnostics | null; branch?: V4Branch | null }) {
   const [tab, setTab] = useState<Tab>('state');
   const [selectedTurnId, setSelectedTurnId] = useState('');
   const selectedTurn = selectedTurnId ? session.turns.find((turn) => turn.id === selectedTurnId) : session.turns.at(-1);
@@ -109,6 +110,12 @@ export function V4DiagnosticsPanel({ session, rejected }: { session: V4Session; 
   const copyOutput = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
 
   return <aside className="v2-panel v2-diagnostics" aria-label="Diagnostics"><h2>Diagnostics</h2>
+    {branch && <section className="v2-instrument"><h3>Branch frontier</h3><dl>
+      <dt>Story</dt><dd>{branch.storyId}</dd><dt>Branch</dt><dd>{branch.branchId}</dd>
+      <dt>Revision</dt><dd>{branch.revision}</dd><dt>Parent</dt><dd>{branch.parentBranchId ?? 'Root'}</dd>
+      <dt>Frontier</dt><dd>{branch.frontier ? `${branch.frontier.turnId} / ${branch.frontier.pageId}` : 'Before first turn'}</dd>
+      <dt>Lineage</dt><dd>{branch.lineage.join(' / ') || 'Root'}</dd>
+    </dl></section>}
     <label className="v2-field"><span>Diagnostic turn</span><select value={selectedTurnId} onChange={(event) => setSelectedTurnId(event.target.value)}>
       <option value="">{rejected ? 'Latest / rejected draft' : 'Latest turn'}</option>
       {session.turns.map((turn, index) => <option value={turn.id} key={turn.id}>Turn {String(index + 1).padStart(3, '0')} / state r{turn.worldRevision}</option>)}

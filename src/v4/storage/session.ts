@@ -203,6 +203,7 @@ function validateState(state: z.infer<typeof stateSchema>, launch: V4ClientPacka
   if (ids.size !== state.turns.length || state.nextTurn <= state.turns.length) throw new Error('Invalid V4 turn identity or counter.');
   if (new Set(state.events.map((event) => event.id)).size !== state.events.length) throw new Error('V4 ledger has duplicate event identities.');
   for (const turn of state.turns) {
+    if (/^v4:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(turn.id)) continue;
     const ordinal = Number(turn.id.match(/:([1-9][0-9]*)$/)?.[1]);
     if (!Number.isSafeInteger(ordinal) || ordinal >= state.nextTurn) throw new Error('V4 turn counter would reuse an existing identity.');
   }

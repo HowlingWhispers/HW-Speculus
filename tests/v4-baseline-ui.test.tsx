@@ -1,15 +1,21 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { V4App } from '../src/v4/ui/App';
+import type { V4App as AppComponent } from '../src/v4/ui/App';
 import { publicV4Package } from '../src/v4/contracts/launch';
 import { createV4Session } from '../src/v4/runtime/session';
-import { loadV4Session, saveV4Session } from '../src/v4/storage/session';
+import { saveV4Session } from '../src/v4/storage/session';
+import { loadV4Authorization } from '../src/v4/storage/authorization';
 import { openSideReader } from '../src/v4/ui/reader-window';
 import { v2Package } from './v2-fixtures';
+import { IndexedDBDouble } from './v4-indexeddb-fixture';
 
-beforeEach(() => {
+let V4App: typeof AppComponent;
+beforeEach(async () => {
+  vi.resetModules();
   sessionStorage.clear(); localStorage.clear(); history.replaceState({}, '', '/v4');
+  vi.stubGlobal('indexedDB', new IndexedDBDouble().factory);
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+  ({ V4App } = await import('../src/v4/ui/App'));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -32,7 +38,7 @@ describe('V4 baseline UI', () => {
     expect(await screen.findByLabelText('Your next turn')).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith('/api/v4/launch/v4-baseline-code', { credentials: 'same-origin', cache: 'no-store' });
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(loadV4Session()).toMatchObject({ version: 4, engine: 'v4' });
+    expect(loadV4Authorization()?.primaryAsset).toEqual(publicV4Package(v2Package()).primaryAsset);
     expect(window.location.search).toBe('');
   });
 
@@ -42,6 +48,7 @@ describe('V4 baseline UI', () => {
     const { container } = render(<V4App />);
     const input = await screen.findByLabelText('Your next turn');
     fireEvent.change(input, { target: { value: 'First line\nSecond line' } });
+    await waitFor(() => expect(input).toHaveValue('First line\nSecond line'));
     expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Setup' }));
     expect(container.querySelector('.v2-layout')).toHaveAttribute('data-phone-tab', 'setup');

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { V4Session } from '../runtime/session';
 import { detachedTranscriptChannelName, type DetachedTranscriptMessage } from './detached-channel';
 import { V4Transcript } from './Transcript';
@@ -7,6 +7,7 @@ export function V4DetachedTranscript({ sessionId, hostWindow = window, hostDocum
   const [session, setSession] = useState<V4Session | null>(null);
   const [busy, setBusy] = useState(false);
   const supported = typeof BroadcastChannel !== 'undefined';
+  const sequence = useRef(0);
 
   useEffect(() => {
     hostDocument.title = 'Speculus V4 | Detached Reader';
@@ -21,6 +22,8 @@ export function V4DetachedTranscript({ sessionId, hostWindow = window, hostDocum
         return;
       }
       if (message.type === 'state') {
+        if (!message.branchId || !Number.isSafeInteger(message.sequence) || message.sequence <= sequence.current) return;
+        sequence.current = message.sequence;
         setSession(message.session);
         setBusy(message.busy);
       }

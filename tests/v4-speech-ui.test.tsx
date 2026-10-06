@@ -1,16 +1,23 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { V4Transcript } from '../src/v4/ui/Transcript';
 import { SettingsPanel } from '../src/v4/ui/SettingsPanel';
 import { createV4Session } from '../src/v4/runtime/session';
 import { publicV4Package } from '../src/v4/contracts/launch';
 import { generateV4Turn } from '../src/v4/runtime/engine';
 import { exportV4Session, importV4Session, saveV4Session } from '../src/v4/storage/session';
-import { V4App } from '../src/v4/ui/App';
+import type { V4App as AppComponent } from '../src/v4/ui/App';
 import { MockProvider } from '../src/runtime/providers/mock';
 import { v2Package } from './v2-fixtures';
+import { IndexedDBDouble } from './v4-indexeddb-fixture';
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); sessionStorage.clear(); localStorage.clear(); });
+let V4App: typeof AppComponent;
+beforeEach(async () => {
+  vi.resetModules();
+  vi.stubGlobal('indexedDB', new IndexedDBDouble().factory);
+  ({ V4App } = await import('../src/v4/ui/App'));
+});
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); sessionStorage.clear(); localStorage.clear(); });
 async function session(skipPersona = false) {
   return generateV4Turn({ ...createV4Session(publicV4Package(v2Package())), draft: 'Hello.' }, new MockProvider(), { skipPersona });
 }
@@ -28,13 +35,16 @@ describe('V4 speech controls', () => {
     const input = await screen.findByLabelText('Your next turn');
     expect(speak).not.toHaveBeenCalled();
     fireEvent.change(input, { target: { value: 'Hello again.' } });
+    await waitFor(() => expect(input).toHaveValue('Hello again.'));
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await screen.findByText('Welcome.', { exact: false });
-    expect(speak).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(speak).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole('button', { name: 'Setup' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Read new replies aloud' }));
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Read new replies aloud' })).not.toBeChecked());
     expect(cancel).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Read new replies aloud' }));
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Read new replies aloud' })).toBeChecked());
     fireEvent.click(screen.getByRole('button', { name: 'Skip as' }));
     fireEvent.click(screen.getByRole('button', { name: 'Narrator / automatic' }));
     await screen.findByText('Persona turn skipped by operator');
