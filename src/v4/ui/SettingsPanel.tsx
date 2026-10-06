@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { DEFAULT_TEXT_COLORS, OUTPUT_PRESETS, type V4Session, type V4Settings } from '../runtime/session';
 import { assetsFor, worldClock, type WorldAction } from '../runtime/world';
+import type { useSpeechSynthesis } from './useSpeechSynthesis';
 
-export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
+export function SettingsPanel({ session, disabled, onSettings, onWorld, speech }: {
   session: V4Session; disabled: boolean;
   onSettings: (patch: Partial<V4Settings>) => void; onWorld: (action: WorldAction) => void;
+  speech?: ReturnType<typeof useSpeechSynthesis>;
 }) {
   const { launch, settings, world } = session;
   const assets = assetsFor(launch);
@@ -94,6 +96,17 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld }: {
       </div>
     </details></section>
     <section><h2>Display</h2>
+      <label className="v2-check"><input type="checkbox" checked={settings.speechEnabled} disabled={!speech?.supported} onChange={(event) => onSettings({ speechEnabled: event.target.checked })} /> Read new replies aloud</label>
+      {!speech?.supported && <small>Browser speech synthesis is unavailable.</small>}
+      <label className="v2-field"><span>Speech voice</span><select aria-label="Speech voice" disabled={!speech?.supported || !settings.speechEnabled} value={settings.speechVoiceUri ?? ''} onChange={(event) => onSettings({ speechVoiceUri: event.target.value || undefined })}>
+        <option value="">Browser default</option>
+        {settings.speechVoiceUri && !speech?.voices.some((voice) => voice.voiceURI === settings.speechVoiceUri) && <option value={settings.speechVoiceUri}>Saved voice unavailable (browser default)</option>}
+        {speech?.voices.map((voice) => <option key={voice.voiceURI} value={voice.voiceURI}>{voice.name} ({voice.lang})</option>)}
+      </select></label>
+      <label className="v2-field"><span>Speech rate</span><input aria-label="Speech rate" type="number" min={0.5} max={2} step={0.1} disabled={!speech?.supported || !settings.speechEnabled} value={settings.speechRate} onChange={(event) => {
+        const value = event.target.valueAsNumber;
+        if (Number.isFinite(value) && value >= 0.5 && value <= 2) onSettings({ speechRate: value });
+      }} /></label>
       <label className="v2-check v2-toggle">CRT effects<input type="checkbox" role="switch" checked={settings.crtEffects} onChange={(event) => onSettings({ crtEffects: event.target.checked })} /></label>
       <details className="v2-native"><summary>Roleplay text colors</summary>
         {color('Narration / action', 'actionColor')}{color('Dialogue', 'dialogueColor')}{color('Inner voice', 'thoughtColor')}

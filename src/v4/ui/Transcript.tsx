@@ -1,6 +1,7 @@
 import { useEffect, useRef, type CSSProperties } from 'react';
 import type { V4Session } from '../runtime/session';
 import { isSkippedPersonaTurn } from '../runtime/turn-control';
+import type { useSpeechSynthesis } from './useSpeechSynthesis';
 
 function RoleplayText({ text }: { text: string }) {
   return <>{text.split(/(\*[^*]+\*|\[[^\]]+\]|"[^"]+"|“[^”]+”)/g).map((part, index) =>
@@ -11,7 +12,7 @@ function RoleplayText({ text }: { text: string }) {
           : <span key={index}>{part}</span>)}</>;
 }
 
-export function V4Transcript({ session, busy }: { session: V4Session; busy: boolean }) {
+export function V4Transcript({ session, busy, speech }: { session: V4Session; busy: boolean; speech?: ReturnType<typeof useSpeechSynthesis> }) {
   const scroll = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
   useEffect(() => {
@@ -41,7 +42,12 @@ export function V4Transcript({ session, busy }: { session: V4Session; busy: bool
       {isSkippedPersonaTurn(turn.player)
         ? <article className="v2-message v2-player v2-skipped-turn"><header>Player / {session.launch.persona.name}<span>Turn {String(index + 1).padStart(3, '0')}</span></header><div className="v2-skip-note">Persona turn skipped by operator</div></article>
         : <article className="v2-message v2-player"><header>Player / {session.launch.persona.name}<span>Turn {String(index + 1).padStart(3, '0')}</span></header><div className="v2-prose"><RoleplayText text={turn.player} /></div></article>}
-      <article className="v2-message"><header>{subject}<span>State r{turn.worldRevision}</span></header><div className="v2-prose"><RoleplayText text={turn.reply} /></div></article>
+      <article className="v2-message"><header>{subject}<span>State r{turn.worldRevision}</span></header><div className="v2-prose"><RoleplayText text={turn.reply} /></div>
+        {speech && !isSkippedPersonaTurn(turn.player) && <div className="v4-speech-controls">
+          <button type="button" aria-label="Speak reply" disabled={!speech.supported || !session.settings.speechEnabled || busy} onClick={() => speech.speak(turn.reply, { rate: session.settings.speechRate, voiceUri: session.settings.speechVoiceUri })}>Speak</button>
+          <button type="button" aria-label="Stop speech" disabled={!speech.speaking} onClick={speech.stop}>Stop</button>
+        </div>}
+      </article>
     </div>)}
     {busy && <p className="v2-working">Generation in progress. No new state committed.</p>}
   </div>;

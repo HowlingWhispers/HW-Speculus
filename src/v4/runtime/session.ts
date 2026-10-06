@@ -20,6 +20,9 @@ export const settingsSchema = z.object({
   actionColor: colorSchema.default(DEFAULT_TEXT_COLORS.actionColor),
   dialogueColor: colorSchema.default(DEFAULT_TEXT_COLORS.dialogueColor),
   thoughtColor: colorSchema.default(DEFAULT_TEXT_COLORS.thoughtColor),
+  speechEnabled: z.boolean().default(false),
+  speechRate: z.number().min(0.5).max(2).default(1),
+  speechVoiceUri: z.string().max(1000).optional(),
 });
 const generationSettingsSchema = settingsSchema.pick({
   output: true, maxTokens: true, temperature: true, topK: true, topP: true,

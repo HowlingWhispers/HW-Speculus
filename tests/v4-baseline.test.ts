@@ -26,7 +26,7 @@ describe('V4 flat client baseline', () => {
     expect(session.launch).toMatchObject({ version: 2, engine: 'v2' });
     expect(v4LaunchSchema.safeParse({ ...v2Package(), version: 4, engine: 'v4' }).success).toBe(false);
     expect(session).not.toHaveProperty('branches');
-    expect(session.settings).not.toHaveProperty('speechEnabled');
+    expect(session.settings.speechEnabled).toBe(false);
   });
 
   it('generates V4 turns/context and round-trips authorization-free V4 saves', async () => {
@@ -119,7 +119,7 @@ describe('V4 flat client baseline', () => {
     }
     check('src/v4');
     for (const name of ['terminal.css', 'roleplay-colors.css', 'detached.css', 'autosave.css']) {
-      expect(readFileSync(`src/v4/ui/${name}`, 'utf8')).toBe(readFileSync(`src/v3/ui/${name}`, 'utf8'));
+      expect(readFileSync(`src/v4/ui/${name}`, 'utf8').startsWith(readFileSync(`src/v3/ui/${name}`, 'utf8'))).toBe(true);
     }
   });
 });

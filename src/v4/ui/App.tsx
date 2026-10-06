@@ -15,6 +15,8 @@ import { ToolMenu } from './ToolMenu';
 import { V4DiagnosticsPanel } from './Diagnostics';
 import { SettingsPanel } from './SettingsPanel';
 import { V4Transcript } from './Transcript';
+import { useSpeechSynthesis } from './useSpeechSynthesis';
+import { isSkippedPersonaTurn } from '../runtime/turn-control';
 
 const PIPELINE_STEPS = ['resolve', 'context', 'generate', 'validate', 'commit'] as const;
 const PENDING_IMPORT_KEY = 'speculus.pending-import.v4';
@@ -62,6 +64,13 @@ export function V4App() {
   const liveBusy = useRef(false);
   const busy = phase !== null || importing;
   const floatingReaderSupported = supportsFloatingReader();
+  const speech = useSpeechSynthesis();
+  const { stop: stopSpeech } = speech;
+
+  useEffect(() => {
+    if (!session?.settings.speechEnabled) stopSpeech();
+  }, [session?.settings.speechEnabled, stopSpeech]);
+  useEffect(() => { stopSpeech(); }, [session?.id, stopSpeech]);
 
   const notePhase = (next: EnginePhase) => {
     setPhase(next);
@@ -153,7 +162,7 @@ export function V4App() {
   useEffect(() => {
     if (!session || !transcriptDetached) return;
     detachedChannel.current?.postMessage({ type: 'state', sessionId: session.id, session, busy } satisfies DetachedTranscriptMessage);
-  }, [session?.turns, session?.settings.actionColor, session?.settings.dialogueColor, session?.settings.thoughtColor, session?.settings.crtEffects, busy, transcriptDetached]);
+  }, [session, busy, transcriptDetached]);
 
   useEffect(() => {
     if (!transcriptDetached) return;
@@ -177,6 +186,10 @@ export function V4App() {
       });
       if (!active.signal.aborted) {
         setSession(next);
+        const latest = next.turns.at(-1);
+        if (next.settings.speechEnabled && latest && !isSkippedPersonaTurn(latest.player)) {
+          speech.speak(latest.reply, { rate: next.settings.speechRate, voiceUri: next.settings.speechVoiceUri });
+        }
         void submitLatestTurnToStudium(next, { reroll }).catch(() => undefined);
       }
     } catch (cause) {
@@ -309,6 +322,7 @@ export function V4App() {
     try {
       const next = importV4Session(await file.text(), session);
       if (!window.confirm('Replace this V4 session with the imported transcript and state? Export the current session first if you want to keep it. V1 is unaffected.')) return;
+      stopSpeech();
       setSession(next); setImportRevision((value) => value + 1); setRejected(null); setError('');
     } catch (cause) { setError(messageOf(cause)); }
     finally { importLock.current = false; setImporting(false); if (fileInput.current) fileInput.current.value = ''; }
@@ -350,13 +364,13 @@ export function V4App() {
       }}>Back to Orbis</button>
     </nav>}
     {session ? <div data-phone-tab={phoneTab} className={`v2-layout ${showSettings ? '' : 'v2-hide-settings'} ${showDiagnostics ? '' : 'v2-hide-diagnostics'}`}>
-      {(isPhone || showSettings) && <SettingsPanel key={`${session.id}:${importRevision}`} session={session} disabled={busy} onSettings={(patch) => setSession({ ...session, settings: { ...session.settings, ...patch } })} onWorld={(action) => {
+      {(isPhone || showSettings) && <SettingsPanel key={`${session.id}:${importRevision}`} session={session} disabled={busy} speech={speech} onSettings={(patch) => setSession({ ...session, settings: { ...session.settings, ...patch } })} onWorld={(action) => {
         try { setSession(operateWorld(session, action)); setError(''); }
         catch (cause) { setError(messageOf(cause)); }
       }} />}
       <section className={`v2-panel v2-simulation ${transcriptDetached ? 'v2-transcript-detached' : ''}`} aria-label="Simulation">
         <header className="v2-panel-heading"><h2>Simulation</h2><span>{session.launch.primaryAsset.name}</span></header>
-        {!transcriptDetached && <V4Transcript session={session} busy={busy} />}
+        {!transcriptDetached && <V4Transcript session={session} busy={busy} speech={speech} />}
         <div className="v2-transcript-tools">
           <button disabled={busy || !session.turns.length || expired || session.turns.at(-1)?.worldRevision !== session.world.revision} onClick={() => void generate(true)}>Reroll latest</button>
           <button disabled={busy || expired} onClick={() => void impersonate()}>Impersonate</button>
