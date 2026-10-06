@@ -28,6 +28,7 @@ describe('V4 independent canonical branch transfers', () => {
     const branch = forkBranch(parent, parent.turns[0].id);
     const inactive = structuredClone(branch.turns[0].pages[0]);
     inactive.id = 'inactive-page'; inactive.reply = 'INACTIVE STORY MUST SURVIVE';
+    if (inactive.diagnostics.history) inactive.diagnostics.history = { ...inactive.diagnostics.history, pageId: inactive.id, frontierPageId: inactive.id };
     branch.turns[0].pages.unshift(inactive);
     const exported = exportBranch(branch, launch());
     expect(JSON.parse(exported)).toMatchObject({ format: 'speculus-v4-session', version: 4, engine: 'v4', schemaVersion: 4 });
@@ -136,7 +137,11 @@ describe('V4 independent canonical branch transfers', () => {
     const branch = await generated();
     const page = branch.turns[0].pages[0];
     page.diagnostics.prompt = 'x'.repeat(500_000);
-    for (let i = 0; i < 34; i++) branch.turns[0].pages.push({ ...structuredClone(page), id: `inactive-${i}` });
+    for (let i = 0; i < 34; i++) {
+      const inactive = { ...structuredClone(page), id: `inactive-${i}` };
+      if (inactive.diagnostics.history) inactive.diagnostics.history = { ...inactive.diagnostics.history, pageId: inactive.id, frontierPageId: inactive.id };
+      branch.turns[0].pages.push(inactive);
+    }
     expect(() => exportBranch(branch)).toThrow('No history was pruned');
     expect(branch.turns[0].pages).toHaveLength(35);
   });

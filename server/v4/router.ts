@@ -15,15 +15,20 @@ const generationSchema = z.object({
 });
 const researchRetractionSchema = z.object({
   launchId: z.string().min(8).max(200),
-  sessionId: z.string().min(1).max(200),
-  turnId: z.string().min(1).max(200),
+  storyId: z.string().min(1).max(300),
+  branchId: z.string().min(1).max(300),
+  turnId: z.string().min(1).max(300),
+  pageId: z.string().min(1).max(300),
+  engine: z.literal('v4'),
 });
 const researchObservationSchema = researchRetractionSchema.extend({
   occurredAt: z.number().int().positive().safe(),
   player: z.string().min(1).max(16000), reply: z.string().min(1).max(64000),
   worldRevision: z.number().int().nonnegative(), locationId: z.string().max(200).nullable(),
-  reroll: z.boolean().default(false), engine: z.literal('v4').default('v4'),
+  reroll: z.boolean().default(false),
 });
+const researchBundleId = (body: z.infer<typeof researchRetractionSchema>) =>
+  `speculus:v4:${JSON.stringify([body.storyId, body.branchId, body.turnId])}`;
 
 const resumeSourceSchema = z.object({
   id: z.string().min(1).max(200), type: z.string().min(1).max(40), revision: z.string().min(1).max(200),
@@ -137,7 +142,7 @@ export function createV4Router(options: { production?: boolean } = {}) {
       const studiumBase = (process.env.STUDIUM_API_URL ?? '').trim().replace(/\/$/, '');
       const studiumSecret = process.env.STUDIUM_BRIDGE_SECRET ?? '';
       if (!studiumBase || !studiumSecret) return response.status(202).json({ ok: true, retracted: false, reason: 'studium_disabled' });
-      const bundleId = `speculus:${body.sessionId}:${body.turnId}`;
+      const bundleId = researchBundleId(body);
       const upstream = await fetch(`${studiumBase}/api/v1/bundles/${encodeURIComponent(bundleId)}`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${studiumSecret}` }, signal: AbortSignal.timeout(5000),
       });
@@ -157,12 +162,13 @@ export function createV4Router(options: { production?: boolean } = {}) {
       const studiumSecret = process.env.STUDIUM_BRIDGE_SECRET ?? '';
       if (!studiumBase || !studiumSecret) return response.status(202).json({ ok: true, forwarded: false, reason: 'studium_disabled' });
       if (!session.worldId) return response.status(202).json({ ok: true, forwarded: false, reason: 'world_not_packaged' });
-      const recordId = `speculus:${body.engine}:${body.sessionId}:${body.turnId}`;
+      const recordId = `speculus:v4:${JSON.stringify([body.storyId, body.branchId, body.turnId, body.pageId])}`;
       const bundle = {
-        schemaVersion: 'studium.bundle.v1', bundleId: `speculus:${body.sessionId}:${body.turnId}`,
+        schemaVersion: 'studium.bundle.v1', bundleId: researchBundleId(body),
         worldId: session.worldId, source: 'speculus', capturedAt: new Date().toISOString(), sanitized: true,
         records: [{
-          recordId, occurredAt: new Date(body.occurredAt).toISOString(), kind: `speculus_${body.engine}_turn`,
+          recordId, storyId: body.storyId, branchId: body.branchId, turnId: body.turnId, pageId: body.pageId,
+          occurredAt: new Date(body.occurredAt).toISOString(), kind: `speculus_${body.engine}_turn`,
           summary: `PLAYER TURN\n${clip(body.player, 1800)}\n\nSIMULATION REPLY\n${clip(body.reply, 1800)}`,
           evidence: [`Player: ${clip(body.player, 900)}`, `Simulation: ${clip(body.reply, 900)}`], signals: [],
           tags: [`speculus-${body.engine}`, `source:${session.source.type}`, body.reroll ? 'reroll' : 'committed-turn',

@@ -16,8 +16,17 @@ export function branchSourceFor(launch: V4ClientPackage): V4BranchSource {
   return { sourceType: launch.primaryAsset.type, sourceId: launch.primaryAsset.id, sourceRevision: launch.primaryAsset.revision,
     personaId: launch.persona.id, subjectId: launch.character?.id ?? null };
 }
+export const pageSourceSchema = z.object({
+  kind: z.enum(['alternative', 'input-edit', 'reply-edit']), branchId: idSchema, turnId: idSchema, pageId: idSchema,
+  forkTurnId: idSchema, forkPageId: idSchema,
+});
+export const pageHistoryDiagnosticsSchema = z.object({
+  branchId: idSchema, pageId: idSchema, frontierTurnId: idSchema, frontierPageId: idSchema,
+  sourceTurnId: idSchema.optional(), sourcePageId: idSchema.optional(),
+});
 export const branchPageSchema = z.object({
-  id: idSchema, reply: z.string().min(1).max(64000), diagnostics: diagnosticsSchema,
+  id: idSchema, player: z.string().min(1).max(16000).optional(), source: pageSourceSchema.optional(),
+  reply: z.string().min(1).max(64000), diagnostics: diagnosticsSchema.extend({ history: pageHistoryDiagnosticsSchema.optional() }),
   createdAt: z.number().finite(), worldRevision: z.number().int().nonnegative(), resolution: resolutionSchema.nullable(),
   before: snapshotSchema.nullable(), resolved: snapshotSchema.nullable(), after: snapshotSchema.nullable(),
 });
@@ -67,9 +76,26 @@ const validatedBranchSchema = branchShape.superRefine((branch, ctx) => {
   for (const turn of branch.turns) {
     unique(turn.id);
     if (!turn.pages.some((page) => page.id === turn.activePageId)) fail('Active page is not a turn member.');
+    if (turn.pages.find((page) => page.id === turn.activePageId)?.player !== undefined
+      && turn.pages.find((page) => page.id === turn.activePageId)?.player !== turn.player) fail('Selected page input does not match its turn.');
     for (const page of turn.pages) {
       unique(page.id);
       if (page.diagnostics.worldRevision !== page.worldRevision) fail('Page diagnostics world revision is inconsistent.');
+      if (page.source && (page.source.turnId !== turn.id || page.source.pageId === page.id
+        || !turn.pages.some((value) => value.id === page.source!.pageId)
+        || page.source.forkTurnId !== turn.id || page.source.forkPageId !== page.source.pageId
+        || ![branch.branchId, ...branch.lineage].includes(page.source.branchId))) fail('Page source linkage is inconsistent.');
+      if (page.source) {
+        const source = turn.pages.find((value) => value.id === page.source!.pageId);
+        if (!source || turn.pages.indexOf(source) >= turn.pages.indexOf(page) || !sameState(page.before, source.before)
+          || (page.source.kind !== 'input-edit' && (page.player !== (source.player ?? turn.player)
+            || !sameState(page.resolved, source.resolved) || !sameState(page.resolution, source.resolution)))) fail('Page source resolution/input linkage is inconsistent.');
+      }
+      const history = page.diagnostics.history;
+      if (history && (history.pageId !== page.id || history.frontierTurnId !== turn.id || history.frontierPageId !== page.id
+        || ![branch.branchId, ...branch.lineage].includes(history.branchId)
+        || (history.sourceTurnId !== undefined && history.sourceTurnId !== turn.id)
+        || (history.sourcePageId !== undefined && !turn.pages.some((value) => value.id === history.sourcePageId)))) fail('Page history diagnostics linkage is inconsistent.');
       const complete = [page.before, page.resolved, page.after, page.resolution].filter(Boolean).length;
       if (complete !== 0 && complete !== 4) fail('Page checkpoints must be complete or null.');
       if (page.before && page.resolved && page.after && page.resolution) {
@@ -98,7 +124,7 @@ const validatedBranchSchema = branchShape.superRefine((branch, ctx) => {
   }
   if (operationIndex !== branch.operations.length) fail('Operation chronology is inconsistent.');
   if (!sameState(state, branch.head)) fail('Branch head is inconsistent with its frontier.');
-  const validateLedger = (snapshot: z.infer<typeof snapshotSchema>, frontierIndex: number) => {
+  const validateLedger = (snapshot: z.infer<typeof snapshotSchema>, frontierIndex: number, frontierPageId?: string) => {
     const prefix = branch.turns.slice(0, frontierIndex + 1).map((turn) => turn.id);
     const future = new Set(branch.turns.slice(frontierIndex + 1).map((turn) => turn.id));
     const ids = snapshot.events.map((event) => event.id);
@@ -111,6 +137,9 @@ const validatedBranchSchema = branchShape.superRefine((branch, ctx) => {
       || snapshot.events.some((event) => event.ownerTurnId && future.has(event.ownerTurnId))) fail('Snapshot contains an inconsistent turn prefix.');
     if (new Set(snapshot.stateProposals.map((proposal) => proposal.id)).size !== snapshot.stateProposals.length
       || snapshot.stateProposals.some((proposal) => !prefix.includes(proposal.sourceTurnId))) fail('Snapshot proposal ownership is inconsistent.');
+    if (snapshot.stateProposals.some((proposal) => proposal.sourcePageId !== undefined
+      && (!proposal.id.startsWith(`proposal:${proposal.sourcePageId}:`) || proposal.sourcePageId !== (proposal.sourceTurnId === prefix.at(-1)
+        ? frontierPageId ?? branch.turns[frontierIndex]?.activePageId : branch.turns.find((turn) => turn.id === proposal.sourceTurnId)?.activePageId)))) fail('Snapshot proposal page ownership is inconsistent.');
     if (Object.values(snapshot.relationships).some((relationship) => relationship.events.some((event) => future.has(event.turnId)))
       || [snapshot.world, ...snapshot.events.flatMap((event) => event.world ? [event.world] : [])].some(({ domains }) =>
         domains.conditions.some((condition) => condition.ownerTurnId && future.has(condition.ownerTurnId))
@@ -127,7 +156,7 @@ const validatedBranchSchema = branchShape.superRefine((branch, ctx) => {
   branch.turns.forEach((turn, index) => { for (const page of turn.pages) {
     if (page.before) validateLedger(page.before, index - 1);
     if (page.resolved) validateLedger(page.resolved, index - 1);
-    if (page.after) validateLedger(page.after, index);
+    if (page.after) validateLedger(page.after, index, page.id);
   } });
 });
 
@@ -157,7 +186,8 @@ export const branchSchema = z.unknown().transform((value, ctx): V4Branch => {
 export function createRootBranch(session: V4Session): V4Branch {
   const turns = session.turns.map(({ id, player, ...flat }) => {
     const pageId = crypto.randomUUID();
-    return { id, player, activePageId: pageId, pages: [{ ...flat, id: pageId, resolution: null, before: null, resolved: null, after: null }] };
+    return { id, player, activePageId: pageId, pages: [{ ...flat, diagnostics: diagnosticsSchema.parse(flat.diagnostics),
+      id: pageId, player, resolution: null, before: null, resolved: null, after: null }] };
   });
   return branchSchema.parse({ version: 4, engine: 'v4', storyId: session.id, branchId: crypto.randomUUID(), parentBranchId: null,
     forkTurnId: null, forkPageId: null, lineage: [], label: 'Root', createdAt: Date.now(), revision: 0, source: branchSourceFor(session.launch),
@@ -209,24 +239,30 @@ export function forkBranch(branch: V4Branch, turnId: string, pageId?: string): V
   const head = reconstructAfterTurn(valid, turnId, pageId);
   const index = valid.turns.findIndex((turn) => turn.id === turnId);
   const turns = valid.turns.slice(0, index + 1);
+  const selected = turns.at(-1)!.pages.find((page) => page.id === (pageId ?? turns.at(-1)!.activePageId))!;
+  const replaced = selected.id !== turns.at(-1)!.activePageId;
+  turns.at(-1)!.activePageId = selected.id;
+  turns.at(-1)!.player = selected.player ?? turns.at(-1)!.player;
   const ids = new Set(turns.map((turn) => turn.id));
   return branchSchema.parse({ ...structuredClone(valid), branchId: crypto.randomUUID(), parentBranchId: valid.branchId,
     forkTurnId: turnId, forkPageId: pageId ?? turns.at(-1)!.activePageId, lineage: [...valid.lineage, valid.branchId],
     label: `Fork after ${index + 1}`, createdAt: Date.now(), revision: 0, turns, head,
-    operations: valid.operations.filter((op) => op.turnId === null || ids.has(op.turnId)),
+    operations: valid.operations.filter((op) => (op.turnId === null || ids.has(op.turnId)) && (!replaced || op.turnId !== turnId)),
     frontier: { turnId, pageId: pageId ?? turns.at(-1)!.activePageId } });
 }
 
 export async function generationBranchTurn(branch: V4Branch, launch: V4ClientPackage, provider: ProviderAdapter,
-  options: Omit<V4GenerationOptions, 'reroll' | 'turnId' | 'recordedResolution' | 'onCheckpoints'> = {}): Promise<V4Branch> {
+  options: Omit<V4GenerationOptions, 'reroll' | 'turnId' | 'pageId' | 'editedReply' | 'recordedResolution' | 'onCheckpoints'> = {}): Promise<V4Branch> {
   const session = projectBranch(branch, launch);
   let checkpoints: Parameters<NonNullable<V4GenerationOptions['onCheckpoints']>>[0] | undefined;
-  const next = await generateV4Turn(session, provider, { ...options, turnId: `v4:${crypto.randomUUID()}`, onCheckpoints: (value) => { checkpoints = value; } });
+  const pageId = crypto.randomUUID();
+  const next = await generateV4Turn(session, provider, { ...options, pageId, turnId: `v4:${crypto.randomUUID()}`, onCheckpoints: (value) => { checkpoints = value; } });
   if (!checkpoints) throw new Error('Generation did not capture complete boundaries.');
   const flat = next.turns.at(-1)!;
-  const pageId = crypto.randomUUID();
   const turn = { id: flat.id, player: flat.player, activePageId: pageId, pages: [{
-    id: pageId, reply: flat.reply, diagnostics: flat.diagnostics, createdAt: flat.createdAt, worldRevision: flat.worldRevision,
+    id: pageId, player: flat.player, reply: flat.reply,
+    diagnostics: { ...flat.diagnostics, history: { branchId: branch.branchId, pageId, frontierTurnId: flat.id, frontierPageId: pageId } },
+    createdAt: flat.createdAt, worldRevision: flat.worldRevision,
     resolution: checkpoints.resolution, before: captureSnapshot(checkpoints.before), resolved: captureSnapshot(checkpoints.resolved), after: captureSnapshot(checkpoints.after),
   }] };
   const candidate = branchSchema.parse({ ...branch, turns: [...branch.turns, turn], head: captureSnapshot(next), draft: next.draft,
@@ -234,3 +270,6 @@ export async function generationBranchTurn(branch: V4Branch, launch: V4ClientPac
   projectBranch(candidate, launch);
   return candidate;
 }
+
+export { generateAlternative, selectPage, editTurn, deleteLatestAsBranch } from './history';
+export type { V4HistoryOptions, V4EditOptions } from './history';

@@ -3,7 +3,7 @@ import { parseV4ClientPackage, type V4ClientPackage } from '../contracts/launch'
 import { V4BrowserProvider } from '../providers/browser';
 import { V4DraftRejected, type EnginePhase } from '../runtime/engine';
 import { generateV4PersonaDraft } from '../runtime/persona-draft';
-import { submitLatestTurnToStudium } from '../research/studium';
+import { retractBranchTurnFromStudium, submitBranchTurnToStudium } from '../research/studium';
 import { createV4Session, operateWorld, type V4Diagnostics, type V4Session } from '../runtime/session';
 import { acceptStateProposal, rejectStateProposal } from '../runtime/state-review';
 import { loadLatestV4LocalAutosave } from '../storage/autosave';
@@ -21,7 +21,7 @@ import { useSpeechSynthesis } from './useSpeechSynthesis';
 import { isSkippedPersonaTurn } from '../runtime/turn-control';
 import { BranchImportCollision, useBranchController } from './useBranchController';
 import { BranchSwitcher } from './BranchSwitcher';
-import { forkBranch } from '../runtime/branches';
+import { deleteLatestAsBranch, editTurn, forkBranch, generateAlternative, selectPage } from '../runtime/branches';
 import type { V4Branch } from '../runtime/branches';
 import { loadActiveBranch } from '../storage/branches';
 
@@ -47,6 +47,7 @@ const messageOf = (error: unknown) => error instanceof Error ? error.message : '
 export function V4App() {
   const [session, setSession] = useState<V4Session | null>(null);
   const [composerDraft, setComposerDraft] = useState('');
+  const [previews, setPreviews] = useState<Record<string, string>>({});
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState('');
   const [storageError, setStorageError] = useState('');
@@ -69,7 +70,6 @@ export function V4App() {
   const rootFileInput = useRef<HTMLInputElement>(null);
   const detachedWindow = useRef<Window | null>(null);
   const detachedChannel = useRef<BroadcastChannel | null>(null);
-  const liveSession = useRef<V4Session | null>(null);
   const liveBusy = useRef(false);
   const busy = phase !== null || importing;
   const floatingReaderSupported = supportsFloatingReader();
@@ -90,7 +90,16 @@ export function V4App() {
   const readerSequence = useRef(0);
   const liveBranchId = useRef<string | null>(null);
   liveBranchId.current = branchController.branch?.branchId ?? null;
-  const readerSession = (value: V4Session): V4Session => ({ ...value, launch: { ...value.launch, launchId: 'detached-reader', expiresAt: 0 } });
+  const liveReaderView = useRef<V4Session | null>(null);
+  const readerSession = (value: V4Session): V4Session => ({ ...value,
+    launch: { ...value.launch, launchId: 'detached-reader', expiresAt: 0 },
+    turns: value.turns.map((turn) => {
+      const selected = previews[turn.id];
+      const page = branchController.branch?.turns.find((item) => item.id === turn.id)?.pages.find((item) => item.id === selected);
+      return page ? { ...turn, player: page.player ?? turn.player, reply: page.reply, diagnostics: page.diagnostics, createdAt: page.createdAt, worldRevision: page.worldRevision } : turn;
+    }),
+  });
+  useEffect(() => { liveReaderView.current = session ? readerSession(session) : null; }, [session, previews, branchController.branch]);
   const update = (transform: (value: V4Session) => V4Session, label: string, sourceTurnId?: string) => {
     const turn = branchController.branch?.turns.find((value) => value.id === sourceTurnId);
     const source = turn ? { turnId: turn.id, pageId: turn.activePageId } : undefined;
@@ -103,6 +112,7 @@ export function V4App() {
   useEffect(() => { stopSpeech(); }, [session?.id, stopSpeech]);
   useEffect(() => { stopSpeech(); }, [branchController.branch?.branchId, stopSpeech]);
   useEffect(() => { setComposerDraft(session?.draft ?? ''); }, [branchController.branch?.branchId]);
+  useEffect(() => { setPreviews({}); }, [branchController.branch?.branchId]);
 
   const notePhase = (next: EnginePhase) => {
     setPhase(next);
@@ -110,9 +120,8 @@ export function V4App() {
   };
 
   useEffect(() => {
-    liveSession.current = session;
     liveBusy.current = busy;
-  }, [session, busy]);
+  }, [busy]);
 
   useEffect(() => {
     let active = true;
@@ -178,9 +187,9 @@ export function V4App() {
     const channel = new BroadcastChannel(detachedTranscriptChannelName(readerConnectionId));
     detachedChannel.current = channel;
     const sendState = () => {
-      const current = liveSession.current;
+      const current = liveReaderView.current;
       if (!current || !liveBranchId.current) return;
-      channel.postMessage({ type: 'state', sessionId: readerConnectionId, branchId: liveBranchId.current, sequence: ++readerSequence.current, session: readerSession(current), busy: liveBusy.current } satisfies DetachedTranscriptMessage);
+      channel.postMessage({ type: 'state', sessionId: readerConnectionId, branchId: liveBranchId.current, sequence: ++readerSequence.current, session: current, busy: liveBusy.current } satisfies DetachedTranscriptMessage);
     };
     channel.onmessage = (event: MessageEvent<DetachedTranscriptMessage>) => {
       const message = event.data;
@@ -205,7 +214,7 @@ export function V4App() {
   useEffect(() => {
     if (!session || !transcriptDetached || !branchController.branch) return;
     detachedChannel.current?.postMessage({ type: 'state', sessionId: readerConnectionId, branchId: branchController.branch.branchId, sequence: ++readerSequence.current, session: readerSession(session), busy } satisfies DetachedTranscriptMessage);
-  }, [session, branchController.branch, busy, transcriptDetached, readerConnectionId]);
+  }, [session, previews, branchController.branch, busy, transcriptDetached, readerConnectionId]);
 
   useEffect(() => {
     if (!transcriptDetached) return;
@@ -220,25 +229,70 @@ export function V4App() {
   }, [transcriptDetached]);
 
   const generate = async (reroll = false, skipPersona = false, skipAsActorId?: string) => {
+    if (reroll) {
+      const latest = branchController.branch?.turns.at(-1);
+      if (latest) await historyAction('alternative', latest.id);
+      return;
+    }
     if (!session || controller.current || importLock.current) return;
     const active = new AbortController();
     controller.current = active; setError(''); setRejected(null); setPhaseSeen([]);
     try {
-      if (reroll) throw new Error('Alternative pages require a verified branch boundary.');
       const next = await branchController.generate(new V4BrowserProvider(session.launch.launchId), {
         skipPersona, skipAsActorId, signal: active.signal, onPhase: notePhase,
       });
+      setComposerDraft(next.draft);
+      const committed = branchController.currentBranch();
+      if (committed) void submitBranchTurnToStudium(committed, next.launch).catch(() => undefined);
       if (!active.signal.aborted) {
-        setComposerDraft(next.draft);
         const latest = next.turns.at(-1);
         if (next.settings.speechEnabled && latest && !isSkippedPersonaTurn(latest.player)) {
           speech.speak(latest.reply, { rate: next.settings.speechRate, voiceUri: next.settings.speechVoiceUri });
         }
-        void submitLatestTurnToStudium(next, { reroll }).catch(() => undefined);
-      }
+      } else setError('The turn was already durably committed before cancellation completed.');
     } catch (cause) {
       setError(active.signal.aborted ? 'Cancelled. Your draft and committed state are unchanged.' : messageOf(cause));
       if (cause instanceof V4DraftRejected) setRejected(cause.diagnostics);
+    } finally { controller.current = null; setPhase(null); }
+  };
+
+  const historyAction = async (kind: 'alternative' | 'select' | 'fork' | 'edit' | 'delete', turnId: string, pageId?: string, changes?: { player?: string; reply?: string }): Promise<void> => {
+    if (!session || controller.current || importLock.current) return;
+    if (kind === 'edit' && !window.confirm('Commit this history edit? Older or unsafe changes create a child branch. Original pages and parent futures remain saved.')) return;
+    if (kind === 'delete' && !window.confirm('Continue in a new branch before the latest turn? The original turn and future remain saved on the parent.')) return;
+    const active = new AbortController();
+    controller.current = active; stopSpeech(); setError(''); setRejected(null); setPhaseSeen([]); notePhase('context');
+    try {
+      await branchController.settle();
+      const previous = branchController.currentBranch();
+      if (!previous || previous.branchId !== branchController.branch?.branchId) throw new Error('The active branch changed before this operation.');
+      const provider = new V4BrowserProvider(session.launch.launchId);
+      const options = { signal: active.signal, onPhase: notePhase };
+      const candidate = kind === 'alternative' ? await generateAlternative(previous, session.launch, provider, turnId, options)
+        : kind === 'edit' ? await editTurn(previous, session.launch, provider, turnId, { ...changes, ...options })
+          : kind === 'select' ? selectPage(previous, turnId, pageId!)
+            : kind === 'delete' ? deleteLatestAsBranch(previous)
+              : forkBranch(previous, turnId, pageId);
+      notePhase('commit');
+      const committed = await branchController.commit(candidate, previous, active.signal);
+      if (active.signal.aborted) setError('The outcome was already durably committed before cancellation completed.');
+      if (kind === 'alternative') {
+        const page = committed.turns.find((turn) => turn.id === turnId)?.pages.at(-1);
+        if (page) setPreviews((value) => ({ ...value, [turnId]: page.id }));
+      } else {
+        setPreviews({});
+        setComposerDraft(committed.draft);
+        if (kind !== 'delete' && committed.frontier) {
+          if (committed.branchId === previous.branchId) {
+            void retractBranchTurnFromStudium(previous, session.launch, turnId).catch(() => undefined);
+          }
+          void submitBranchTurnToStudium(committed, session.launch, turnId).catch(() => undefined);
+        }
+      }
+    } catch (cause) {
+      setError(active.signal.aborted ? 'Cancelled. Your existing branch and pages are unchanged.' : messageOf(cause));
+      if (cause instanceof V4DraftRejected) setRejected(cause.diagnostics);
+      if (kind === 'edit') throw cause;
     } finally { controller.current = null; setPhase(null); }
   };
 
@@ -423,17 +477,13 @@ export function V4App() {
           stopSpeech();
           void branchController.switchTo(id).catch((cause) => setStorageError(messageOf(cause)));
         }} />}
-        {!transcriptDetached && <V4Transcript session={session} busy={busy} speech={speech} onFork={(turnId) => {
-          const previous = branchController.branch;
-          if (!previous) return;
-          try {
-            const candidate = forkBranch(previous, turnId);
-            stopSpeech();
-            void branchController.commit(candidate, previous).catch((cause) => setStorageError(messageOf(cause)));
-          } catch (cause) { setError(messageOf(cause)); }
-        }} canFork={(turnId) => Boolean(branchController.branch?.turns.find((turn) => turn.id === turnId)?.pages.some((page) => page.after))} />}
+        {!transcriptDetached && <V4Transcript key={branchController.branch?.branchId} session={session} busy={busy} speech={speech} branch={branchController.branch ?? undefined} previews={previews}
+          onPreview={(turnId, pageId) => { stopSpeech(); setPreviews((value) => ({ ...value, [turnId]: pageId })); }}
+          onAlternative={(turnId) => void historyAction('alternative', turnId)} onContinue={(turnId, pageId) => void historyAction('select', turnId, pageId)}
+          onEdit={(turnId, changes) => historyAction('edit', turnId, undefined, changes)} onFork={(turnId, pageId) => void historyAction('fork', turnId, pageId)}
+          canFork={(turnId) => Boolean(branchController.branch?.turns.find((turn) => turn.id === turnId)?.pages.some((page) => page.after))} />}
         <div className="v2-transcript-tools">
-          <button disabled title="Alternative pages are not enabled until the page controller is installed">Reroll latest</button>
+          <button disabled={busy || expired || !branchController.branch?.turns.at(-1)?.pages.some((page) => page.before)} onClick={() => void generate(true)}>Reroll latest</button>
           <button disabled={busy || expired} onClick={() => void impersonate()}>Impersonate</button>
           <ToolMenu label="Skip as">
               {skipAsActors.map((actor) => <button key={actor.id} disabled={busy || expired} onClick={() => void generate(false, true, actor.id)}>{actor.name}</button>)}
@@ -441,7 +491,10 @@ export function V4App() {
               {!skipAsActors.length && <button disabled>No NPCs identified</button>}
           </ToolMenu>
           <ToolMenu label="Turn">
-              <button className="v2-delete" disabled title="History is preserved in durable branches">Delete latest</button>
+              <button className="v2-delete" disabled={busy || !branchController.branch?.turns.at(-1)?.pages.some((page) => page.before)} onClick={() => {
+                const latest = branchController.branch?.turns.at(-1);
+                if (latest) void historyAction('delete', latest.id);
+              }}>Delete latest</button>
 
           </ToolMenu>
           <ToolMenu label="Session">

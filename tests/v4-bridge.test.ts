@@ -32,7 +32,7 @@ const generation = (launchId: string) => ({
   topK: 30, topP: 0.8, presencePenalty: 0.1, frequencyPenalty: 0.2, stopSequences: ['STOP'], continueToEndOfSentence: false,
 });
 const research = (launchId: string) => ({
-  launchId, sessionId: 'session-v4', turnId: 'turn:7', occurredAt: Date.now(), player: 'Look around.',
+  launchId, storyId: 'story-v4', branchId: 'branch-v4', turnId: 'turn:7', pageId: 'page:1', occurredAt: Date.now(), player: 'Look around.',
   reply: 'The room is quiet.', worldRevision: 1, locationId: null, engine: 'v4',
 });
 const resume = (version: 2 | 4 = 4) => ({
@@ -153,13 +153,29 @@ describe('isolated V4 bridge', () => {
     expect((await post(base, '/api/v4/research/retract', research(packageValue.launchId), { Cookie: cookie })).status).toBe(401);
   });
 
-  it('submits engine-v4 research and retracts the exact session/turn bundle', async () => {
+  it.each(['storyId', 'branchId', 'turnId', 'pageId', 'engine'] as const)('requires %s on submission and retraction', async (field) => {
+    env(); const base = await listen(createApp()); const launch = await deposit(base);
+    const { cookie } = await claim(base, launch.code);
+    const body: Record<string, unknown> = research(v2Package().launchId);
+    delete body[field];
+    for (const path of ['/api/v4/research', '/api/v4/research/retract']) {
+      expect((await post(base, path, body, { Cookie: cookie })).status).toBe(400);
+      expect((await post(base, path, { ...research(v2Package().launchId), [field]: '' }, { Cookie: cookie })).status).toBe(400);
+    }
+  });
+
+  it('submits engine-v4 research and retracts the exact story/branch/turn bundle', async () => {
     env(); const studium = express(); studium.use(express.json());
     const observed: Array<Record<string, unknown>> = []; const deleted: string[] = [];
+    const stored = new Map<string, Record<string, unknown>>();
     studium.post('/api/v1/bundles', (req, res) => {
-      expect(req.get('authorization')).toBe('Bearer studium-test'); observed.push(req.body); res.status(201).json({ ok: true });
+      expect(req.get('authorization')).toBe('Bearer studium-test'); observed.push(req.body);
+      stored.set(req.body.bundleId, req.body); res.status(201).json({ ok: true });
     });
-    studium.delete('/api/v1/bundles/:id', (req, res) => { deleted.push(req.params.id); res.json({ ok: true }); });
+    studium.delete('/api/v1/bundles/:id', (req, res) => {
+      expect(req.get('authorization')).toBe('Bearer studium-test');
+      deleted.push(req.params.id); stored.delete(req.params.id); res.json({ ok: true });
+    });
     vi.stubEnv('STUDIUM_API_URL', await listen(studium)); vi.stubEnv('STUDIUM_BRIDGE_SECRET', 'studium-test');
     const base = await listen(createApp());
     const packageValue = v2Package({ relatedAssets: [{ id: 'world:test', type: 'world', revision: 'rev-world', name: 'World', summary: 'Fixture.', data: {} }] });
@@ -167,11 +183,30 @@ describe('isolated V4 bridge', () => {
     const body = research(packageValue.launchId);
     expect((await post(base, '/api/v4/research', body, { Cookie: cookie })).status).toBe(202);
     expect((await post(base, '/api/v4/research', { ...body, engine: 'v3' }, { Cookie: cookie })).status).toBe(400);
+    expect((await post(base, '/api/v4/research/retract', { ...body, engine: 'v3' }, { Cookie: cookie })).status).toBe(400);
     expect(observed).toHaveLength(1);
-    expect(observed[0]).toMatchObject({ bundleId: 'speculus:session-v4:turn:7', worldId: 'world:test', records: [{ recordId: 'speculus:v4:session-v4:turn:7', kind: 'speculus_v4_turn', tags: ['speculus-v4', `source:${packageValue.primaryAsset.type}`, 'committed-turn'] }] });
+    expect(observed[0]).toMatchObject({ bundleId: 'speculus:v4:["story-v4","branch-v4","turn:7"]', worldId: 'world:test', records: [{ recordId: 'speculus:v4:["story-v4","branch-v4","turn:7","page:1"]', storyId: body.storyId, branchId: body.branchId, turnId: body.turnId, pageId: body.pageId, kind: 'speculus_v4_turn', tags: ['speculus-v4', `source:${packageValue.primaryAsset.type}`, 'committed-turn'] }] });
     expect(JSON.stringify(observed)).not.toContain('generationGrant');
     expect(JSON.stringify(observed)).not.toContain(packageValue.launchId);
+    expect(JSON.stringify(observed)).not.toContain(packageValue.generationGrant);
+    expect(JSON.stringify(observed)).not.toContain(cookie);
+    const bundleId = 'speculus:v4:["story-v4","branch-v4","turn:7"]';
+    const child = { ...body, branchId: 'child:branch', pageId: 'child:page' };
+    expect((await post(base, '/api/v4/research', child, { Cookie: cookie })).status).toBe(202);
+    expect(stored.size).toBe(2);
+    expect((await post(base, '/api/v4/research/retract', child, { Cookie: cookie })).status).toBe(202);
+    expect(stored.get(bundleId)).toEqual(observed[0]);
+    const replacement = { ...body, pageId: 'page:replacement', reply: 'A different selected outcome.' };
+    expect((await post(base, '/api/v4/research', replacement, { Cookie: cookie })).status).toBe(202);
+    expect(stored.size).toBe(1);
+    expect(stored.get(bundleId)).toMatchObject({ records: [{ recordId: 'speculus:v4:["story-v4","branch-v4","turn:7","page:replacement"]', pageId: replacement.pageId }] });
+    for (const identity of [{ storyId: 'a:b', branchId: 'c' }, { storyId: 'a', branchId: 'b:c' }, { storyId: 'a%3Ab', branchId: 'c' }]) {
+      expect((await post(base, '/api/v4/research', { ...body, ...identity }, { Cookie: cookie })).status).toBe(202);
+    }
+    expect(stored.size).toBe(4);
     expect((await post(base, '/api/v4/research/retract', body, { Cookie: cookie })).status).toBe(202);
-    expect(deleted).toEqual(['speculus:session-v4:turn:7']);
+    expect(deleted).toEqual(['speculus:v4:["story-v4","child:branch","turn:7"]', bundleId]);
+    expect(stored.has(bundleId)).toBe(false);
+    expect(stored.size).toBe(3);
   });
 });

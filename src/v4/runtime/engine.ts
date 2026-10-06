@@ -1,4 +1,4 @@
-import type { ProviderAdapter } from '../../runtime/providers/types';
+import type { ProviderAdapter, ProviderResult } from '../../runtime/providers/types';
 import { commitRelationshipEvent, getRelationship, removeRelationshipTurns } from '../../runtime/relationships/core';
 import { heuristicRelationshipScorer } from '../../runtime/relationships/evaluator';
 import { compileV4Context } from './context';
@@ -97,6 +97,8 @@ export function validateV4Reply(text: string, playerName = '') {
 export type V4GenerationOptions = {
   reroll?: boolean; skipPersona?: boolean; skipAsActorId?: string; signal?: AbortSignal; onPhase?: (phase: EnginePhase) => void; now?: number;
   turnId?: string;
+  pageId?: string;
+  editedReply?: string;
   recordedResolution?: { resolution: V4TurnResolution; resolvedSession: V4Session };
   onCheckpoints?: (checkpoints: { before: V4Session; resolved: V4Session; after: V4Session; resolution: V4TurnResolution }) => void;
 };
@@ -104,7 +106,8 @@ export type V4GenerationOptions = {
 export async function generateV4Turn(session: V4Session, provider: ProviderAdapter, options: V4GenerationOptions = {}): Promise<V4Session> {
   const settings = settingsSchema.parse(session.settings);
   if (options.signal?.aborted) throw new Error('Generation cancelled. No provider call was made.');
-  if (session.launch.expiresAt <= Date.now()) throw new Error('V4 authorization expired. Relaunch from Orbis, then import your V4 or compatible V3 export.');
+  const localRecordedReplyEdit = options.editedReply !== undefined && options.recordedResolution !== undefined && !options.reroll;
+  if (session.launch.expiresAt <= Date.now() && !localRecordedReplyEdit) throw new Error('V4 authorization expired. Relaunch from Orbis, then import your V4 or compatible V3 export.');
   const originalLast = session.turns.at(-1);
   const workingSession = options.reroll && originalLast ? rollbackTurnOwnedActions(session, originalLast.id) : session;
   const last = workingSession.turns.at(-1);
@@ -135,6 +138,7 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
     : null;
 
   options.onPhase?.('resolve');
+  if (options.signal?.aborted) throw new Error('Generation cancelled. No turn or state was committed.');
   const resolved = options.recordedResolution
     ? { session: structuredClone(options.recordedResolution.resolvedSession), resolution: resolutionSchema.parse(options.recordedResolution.resolution) }
     : resolveV4PlayerTurn(base, player, { skipPersona, reroll: options.reroll });
@@ -149,7 +153,10 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   options.onPhase?.('context');
   const compiled = compileV4Context(resolvedSession, player, skipPersona ? 'skip-persona' : 'normal', resolved.resolution);
   options.onPhase?.('generate');
-  let result = await provider.generate({
+  if (options.signal?.aborted) throw new Error('Generation cancelled. No provider call was made.');
+  let result: ProviderResult = options.editedReply !== undefined ? {
+    text: options.editedReply, metadata: { provider: provider.kind, model: workingSession.launch.model, endpoint: 'local-reply-edit', durationMs: 0, completionStatus: 'completed' },
+  } : await provider.generate({
     prompt: compiled.prompt, model: workingSession.launch.model,
     temperature: settings.temperature, maxTokens: settings.maxTokens, topK: settings.topK, topP: settings.topP,
     presencePenalty: settings.presencePenalty, frequencyPenalty: settings.frequencyPenalty,
@@ -162,7 +169,7 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   const truncated = result.metadata.completionStatus === 'max_tokens';
   const proseRepairNeeded = needsV4ProseRepair(initialSlopHits);
   const repairedReasons: string[] = [];
-  if (truncated || proseRepairNeeded) {
+  if (options.editedReply === undefined && (truncated || proseRepairNeeded)) {
     if (truncated) repairedReasons.push('hard-ceiling truncation');
     if (proseRepairNeeded) repairedReasons.push(`${initialSlopHits.length} stock prose constructions`);
     const firstDurationMs = result.metadata.durationMs;
@@ -222,6 +229,8 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
       : 'The player persona turn was explicitly skipped. The renderer was forbidden from inventing a player action or decision.');
   }
   if (options.reroll) warnings.push('Reroll reused the already-resolved world state. Elapsed time and narrative dice were not rolled or committed twice.');
+  else if (options.recordedResolution) warnings.push('This history page reused the recorded trusted resolution. Elapsed time and narrative dice were not rolled twice.');
+  if (options.editedReply !== undefined) warnings.push('Reply-only edit was structurally validated and normalized locally. Relationship effects and proposals were recomputed; prose did not author physical state.');
   if (decodedReply !== rawReply) warnings.push('Serialized roleplay escape sequences were decoded before commit.');
   if (sanitizedReply !== decodedReply) warnings.push('Legacy Speculus turn/control markers were stripped before commit.');
   if (canNormalize && roleplayNormalized !== sanitizedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
@@ -320,7 +329,9 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   const proposalBase = workingSession.stateProposals.filter((proposal) => proposal.sourceTurnId !== id);
   const stateProposals = [
     ...proposalBase,
-    ...deriveStateProposals({ ...resolvedSession, relationships, stateProposals: proposalBase }, id, normalizedReply),
+    ...deriveStateProposals({ ...resolvedSession, relationships, stateProposals: proposalBase }, id, normalizedReply).map((proposal) => options.pageId ? {
+      ...proposal, id: `proposal:${options.pageId}:${proposal.id.slice(`proposal:${id}:`.length)}`, sourcePageId: options.pageId,
+    } : proposal),
   ];
 
   const committed: V4Session = {

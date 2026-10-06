@@ -521,3 +521,7 @@ body:has(.spec-v2) { margin: 0; background: #070a0f; }
 .spec-v2.v3-phone .v2-status { padding: 2px 6px; }
 .spec-v2.v3-phone .v2-status > div { display: none; }
 .v4-speech-controls { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+.v4-page-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.75rem; }
+.v4-page-controls span { font-size: 11px; color: var(--v2-muted); }
+.v4-history-editor textarea { min-height: 140px; }
+.v4-branch-switcher { margin: 6px 18px; }

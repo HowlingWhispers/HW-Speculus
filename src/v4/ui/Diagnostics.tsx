@@ -46,6 +46,8 @@ export function V4DiagnosticsPanel({ session, rejected, branch }: { session: V4S
   const [tab, setTab] = useState<Tab>('state');
   const [selectedTurnId, setSelectedTurnId] = useState('');
   const selectedTurn = selectedTurnId ? session.turns.find((turn) => turn.id === selectedTurnId) : session.turns.at(-1);
+  const canonicalTurn = branch?.turns.find((turn) => turn.id === selectedTurn?.id);
+  const selectedPage = canonicalTurn?.pages.find((page) => page.id === canonicalTurn.activePageId);
   const diagnostic = selectedTurnId ? selectedTurn?.diagnostics : rejected ?? selectedTurn?.diagnostics;
   const view = perceptionFor(session.world, session.launch.character?.id ?? session.launch.persona.id);
   const clock = worldClock(session.world);
@@ -56,10 +58,11 @@ export function V4DiagnosticsPanel({ session, rejected, branch }: { session: V4S
     presentHere: presentIds.has(actor.id), knownFacts: actor.knowledge.length,
   }));
   const rawView = useMemo(() => ({
-    runtime: 'v4-baseline', sessionSchema: { version: session.version, engine: session.engine }, launchContract: { version: session.launch.version, engine: session.launch.engine }, source: session.launch.primaryAsset,
+    runtime: 'v4', sessionSchema: { version: session.version, engine: session.engine }, launchContract: { version: session.launch.version, engine: session.launch.engine }, source: session.launch.primaryAsset,
+    branch: branch ? { storyId: branch.storyId, branchId: branch.branchId, parentBranchId: branch.parentBranchId, lineage: branch.lineage, frontier: branch.frontier } : null,
     world: session.world, settings: session.settings, turns: session.turns, events: session.events, nextTurn: session.nextTurn,
     sessionRelationships: session.relationships, stateProposals: session.stateProposals,
-  }), [session]);
+  }), [session, branch]);
   const contextView = diagnostic ? {
     estimatedInputTokens: diagnostic.estimatedInputTokens,
     outputBudget: diagnostic.outputBudget,
@@ -115,6 +118,7 @@ export function V4DiagnosticsPanel({ session, rejected, branch }: { session: V4S
       <dt>Revision</dt><dd>{branch.revision}</dd><dt>Parent</dt><dd>{branch.parentBranchId ?? 'Root'}</dd>
       <dt>Frontier</dt><dd>{branch.frontier ? `${branch.frontier.turnId} / ${branch.frontier.pageId}` : 'Before first turn'}</dd>
       <dt>Lineage</dt><dd>{branch.lineage.join(' / ') || 'Root'}</dd>
+      {selectedPage?.source && <><dt>History operation</dt><dd>{selectedPage.source.kind}</dd><dt>Reconstruction source</dt><dd>{selectedPage.source.turnId} / {selectedPage.source.pageId}</dd></>}
     </dl></section>}
     <label className="v2-field"><span>Diagnostic turn</span><select value={selectedTurnId} onChange={(event) => setSelectedTurnId(event.target.value)}>
       <option value="">{rejected ? 'Latest / rejected draft' : 'Latest turn'}</option>

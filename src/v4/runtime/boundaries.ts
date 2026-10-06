@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import { diagnosticsSchema, eventSchema, relationshipStateSchema, sessionStateProposalsSchema, type V4Session } from './session';
+import { diagnosticsSchema, eventSchema, relationshipStateSchema, type V4Session } from './session';
 import { worldSchema } from './world';
 import { V4_RESOLUTION_SCHEMA } from './resolution';
 import { runtimeDomainsSchema } from './state-domains';
+import { stateProposalSchema } from './state-proposals';
 import type { V4Branch } from './branches';
 
 export const snapshotSchema = z.object({
@@ -13,7 +14,7 @@ export const snapshotSchema = z.object({
       resources: runtimeDomainsSchema.shape.resources.removeDefault(), conditions: runtimeDomainsSchema.shape.conditions.removeDefault(),
       mysteries: runtimeDomainsSchema.shape.mysteries.removeDefault(), chronicle: runtimeDomainsSchema.shape.chronicle.removeDefault(),
     }),
-  }), relationships: relationshipStateSchema.removeDefault(), stateProposals: sessionStateProposalsSchema.removeDefault(),
+  }), relationships: relationshipStateSchema.removeDefault(), stateProposals: z.array(stateProposalSchema.and(z.object({ sourcePageId: z.string().min(1).max(300).optional() }))).max(5000),
   events: z.array(eventSchema).max(40000), nextTurn: z.number().int().positive(),
 });
 export type V4Snapshot = z.infer<typeof snapshotSchema>;
@@ -57,9 +58,15 @@ export function reconstructAfterTurn(branch: V4Branch, turnId: string, pageId?: 
   if (!turn) throw new Error('Fork turn is not in this branch.');
   const page = turn.pages.find((value) => value.id === (pageId ?? turn.activePageId));
   if (!page?.after || !page.before || !page.resolved || !page.resolution) throw new Error('Historical boundary is unverifiable.');
-  if (page.id !== turn.activePageId) throw new Error('Inactive page continuation is not implemented.');
+  const previous = branch.turns.indexOf(turn) === 0 ? branch.initial : branch.turns[branch.turns.indexOf(turn) - 1].pages
+    .find((value) => value.id === branch.turns[branch.turns.indexOf(turn) - 1].activePageId)?.after ?? branch.initial;
+  if (!previous) throw new Error('Historical prefix is unverifiable.');
+  let before = previous;
+  const previousTurnId = branch.turns[branch.turns.indexOf(turn) - 1]?.id ?? null;
+  for (const operation of branch.operations.filter((value) => value.turnId === previousTurnId)) before = operation.after;
+  if (!sameState(page.before, before)) throw new Error('Page before boundary does not match the authoritative prefix.');
   let snapshot = page.after;
-  for (const operation of branch.operations.filter((value) => value.turnId === turn.id)) {
+  for (const operation of branch.operations.filter((value) => value.turnId === turn.id && page.id === turn.activePageId)) {
     if (operation.pageId !== page.id || !sameState(operation.before, snapshot)) throw new Error('Operation boundary linkage is inconsistent.');
     snapshot = operation.after;
   }
