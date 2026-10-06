@@ -209,4 +209,58 @@ describe('isolated V4 bridge', () => {
     expect(stored.has(bundleId)).toBe(false);
     expect(stored.size).toBe(3);
   });
+
+  it('full V4 production launch path: Orbis → /api/v4/launch → /v4?launch= → claim → /api/v4/generate', async () => {
+    env();
+    const gateway = express();
+    gateway.use(express.json());
+    const generations: Array<Record<string, unknown>> = [];
+    gateway.post('/generate', (req, res) => {
+      generations.push(req.body);
+      res.json({ text: '*The simulation responds.* "Integration test passed."', finishReason: 'stop', metadata: { provider: 'orbis', model: 'xialong-v1', durationMs: 50, completionStatus: 'completed' } });
+    });
+    vi.stubEnv('ORBIS_GENERATION_API_URL', `${await listen(gateway)}/generate`);
+
+    const base = await listen(createApp());
+
+    // 1. Orbis deposits launch package via /api/v4/launch (NOT /api/launch)
+    const depositResponse = await post(base, '/api/v4/launch', v2Package(), auth);
+    expect(depositResponse.status).toBe(201);
+    const { launchUrl } = await depositResponse.json() as { launchUrl: string };
+    const depositUrl = new URL(launchUrl);
+
+    // 2. Verify the returned URL uses /v4 path (not rewritten to /)
+    expect(depositUrl.pathname).toBe('/v4');
+    expect(depositUrl.searchParams.get('launch')).toBeTruthy();
+    const code = depositUrl.searchParams.get('launch')!;
+
+    // 3. V4 claims the launch via /api/v4/launch/<code>
+    const claimResponse = await fetch(`${base}/api/v4/launch/${code}`);
+    expect(claimResponse.status).toBe(200);
+    const claimData = await claimResponse.json() as { package: unknown; resumeSave?: unknown };
+    expect(claimData.package).toMatchObject({ version: 2, engine: 'v2' }); // wire contract remains v2
+    const cookie = claimResponse.headers.get('set-cookie')!;
+    expect(cookie).toContain('speculus_v4_');
+    expect(cookie).toContain('HttpOnly; SameSite=Strict; Path=/api/v4');
+
+    // 4. Verify V4 authorization cookie works for /api/v4/generate
+    const genResponse = await post(base, '/api/v4/generate', generation(v2Package().launchId), { Cookie: cookie });
+    expect(genResponse.status).toBe(200);
+    const genData = await genResponse.json() as { text: string; metadata: unknown };
+    expect(genData.text).toContain('Integration test passed');
+    expect(genData.metadata).toMatchObject({ provider: 'orbis', model: 'xialong-v1' });
+
+    // 5. Verify the generation reached the provider with correct V4-scoped identity
+    expect(generations).toHaveLength(1);
+    expect(generations[0]).toMatchObject({
+      launchId: v2Package().launchId,
+      source: { id: v2Package().primaryAsset.id, type: v2Package().primaryAsset.type, revision: v2Package().primaryAsset.revision },
+    });
+
+    // 6. Verify V4 launch codes are isolated from V2 (/api/v2/launch)
+    const v2Deposit = await deposit(base, v2Package(), '/api/v2');
+    expect(v2Deposit.launchUrl).toContain('/v2?launch=');
+    expect((await fetch(`${base}/api/v4/launch/${v2Deposit.code}`)).status).toBe(404);
+    expect((await fetch(`${base}/api/v2/launch/${code}`)).status).toBe(404);
+  });
 });
