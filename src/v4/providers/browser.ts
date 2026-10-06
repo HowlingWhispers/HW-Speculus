@@ -29,13 +29,20 @@ function gatewayBody(request: ProviderRequest, prompt: string, launchId: string)
 
 async function readGatewayResponse(response: Response, signal?: AbortSignal): Promise<ProviderResult> {
   let body: Partial<ProviderResult> & { error?: string };
+  let rawText = '';
   try {
-    const value: unknown = await response.json();
+    rawText = await response.text();
+    const value: unknown = JSON.parse(rawText);
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid body');
     body = value as typeof body;
   } catch {
     if (signal?.aborted) throw new DOMException('Generation cancelled.', 'AbortError');
-    throw new Error(`V4 generation gateway returned an unreadable response (HTTP ${response.status}). Check the Speculus API and reverse proxy.`);
+    const isHtml = rawText.trimStart().startsWith('<!doctype') || rawText.trimStart().startsWith('<html');
+    throw new Error(
+      isHtml
+        ? `V4 generation gateway returned HTML instead of JSON (HTTP ${response.status}). The /api/v4/generate endpoint is likely not routed to the Speculus API server. Check reverse proxy configuration and SPECULUS_PUBLIC_ORIGIN.`
+        : `V4 generation gateway returned an unreadable response (HTTP ${response.status}).`
+    );
   }
   if (!response.ok) throw new Error(typeof body.error === 'string' && body.error ? body.error : `V4 generation failed (HTTP ${response.status}).`);
   if (typeof body.text !== 'string' || !body.metadata) throw new Error('The V4 bridge returned an invalid response.');

@@ -39,10 +39,13 @@ function speech() {
   vi.stubGlobal('SpeechSynthesisUtterance', class { constructor(readonly text: string) {} });
   return speak;
 }
-function response() {
-  return new Response(JSON.stringify({ text: '*She smiles.* "Durable welcome."', metadata: {
+function mockLaunchResponse(pkg: unknown) {
+  return new Response(JSON.stringify({ package: pkg }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+function mockGenerateResponse(text = '*She smiles.* "Durable welcome."') {
+  return new Response(JSON.stringify({ text, metadata: {
     provider: 'orbis', model: 'mock', durationMs: 1, completionStatus: 'stop',
-  } }), { status: 200 });
+  } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
 describe('V4 durable branch UI', () => {
@@ -57,7 +60,7 @@ describe('V4 durable branch UI', () => {
     expect((await repo.loadActiveBranch())?.branch).toEqual(branch);
     view.unmount();
     history.replaceState({}, '', '/v4?launch=durable-recovery-code');
-    fetch.mockResolvedValue({ ok: true, json: async () => ({ package: publicV4Package(v2Package()) }) });
+    fetch.mockResolvedValue(mockLaunchResponse(publicV4Package(v2Package())));
     render(<V4App />);
     await screen.findByLabelText('Your next turn');
     await waitFor(() => expect(screen.getByLabelText('Your next turn')).toHaveValue(branch.draft));
@@ -114,7 +117,7 @@ describe('V4 durable branch UI', () => {
   it.each(['quota', 'late abort'])('does not publish or speak a generated candidate after %s', async (failure) => {
     const { branch, repo } = await seed(true);
     const speak = speech();
-    vi.stubGlobal('fetch', vi.fn(async () => response()));
+    vi.stubGlobal('fetch', vi.fn(async () => mockGenerateResponse()));
     render(<V4App />);
     await screen.findByLabelText('Your next turn');
     if (failure === 'quota') db.failWrite = { at: 2, name: 'QuotaExceededError' };
@@ -139,7 +142,7 @@ describe('V4 durable branch UI', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     const winner = { ...branch, revision: branch.revision + 1, draft: 'Another tab owns this draft' };
     await repo.saveBranch(winner, winner.source, { expectedRevision: branch.revision, expectedSelectionRevision: 1, activate: true });
-    release(response());
+    release(mockGenerateResponse());
     await screen.findByText('Another tab changed this saved branch. Nothing was overwritten.');
     expect(screen.queryByText('Durable welcome.', { exact: false })).toBeNull();
     expect(screen.getByLabelText('Your next turn')).toHaveValue(branch.draft);
@@ -155,7 +158,7 @@ describe('V4 durable branch UI', () => {
       const records = [...db.stores.get('branches')!.values()] as { branch: V4Branch }[];
       completedWhenSpoken = records.some((record) => record.branch.turns.length === 1);
     });
-    vi.stubGlobal('fetch', vi.fn(async () => response()));
+    vi.stubGlobal('fetch', vi.fn(async () => mockGenerateResponse()));
     render(<V4App />);
     await screen.findByLabelText('Your next turn');
     expect(speak).not.toHaveBeenCalled();

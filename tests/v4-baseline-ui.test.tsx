@@ -32,7 +32,7 @@ describe('V4 baseline UI', () => {
 
   it('claims a compatible fresh launch using only the V4 client bridge', async () => {
     history.replaceState({}, '', '/v4?launch=v4-baseline-code');
-    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ package: publicV4Package(v2Package()) }) });
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ package: publicV4Package(v2Package()) }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     vi.stubGlobal('fetch', fetch);
     render(<V4App />);
     expect(await screen.findByLabelText('Your next turn')).toBeInTheDocument();

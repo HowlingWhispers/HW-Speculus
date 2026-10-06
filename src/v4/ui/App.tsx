@@ -35,9 +35,21 @@ let claim: { code: string; promise: Promise<ClaimedLaunch> } | null = null;
 function claimPackage(code: string) {
   if (claim?.code === code) return claim.promise;
   const promise = fetch(`/api/v4/launch/${encodeURIComponent(code)}`, { credentials: 'same-origin', cache: 'no-store' }).then(async (response) => {
-    const body = await response.json() as { package?: unknown; resumeSave?: unknown; error?: string };
-    if (!response.ok) throw new Error(body.error || 'V4 launch could not be claimed.');
-    return { package: parseV4ClientPackage(body.package), ...(body.resumeSave === undefined ? {} : { resumeSave: body.resumeSave }) };
+    let rawText = '';
+    try {
+      rawText = await response.text();
+      const body = JSON.parse(rawText) as { package?: unknown; resumeSave?: unknown; error?: string };
+      if (!response.ok) throw new Error(body.error || 'V4 launch could not be claimed.');
+      return { package: parseV4ClientPackage(body.package), ...(body.resumeSave === undefined ? {} : { resumeSave: body.resumeSave }) };
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('V4 launch could not be claimed')) throw err;
+      const isHtml = rawText.trimStart().startsWith('<!doctype') || rawText.trimStart().startsWith('<html');
+      throw new Error(
+        isHtml
+          ? `V4 launch claim returned HTML instead of JSON (HTTP ${response.status}). The /api/v4/launch endpoint is likely not routed to the Speculus API server. Check reverse proxy configuration.`
+          : `V4 launch claim returned an unreadable response (HTTP ${response.status}).`
+      );
+    }
   });
   claim = { code, promise };
   return promise;
