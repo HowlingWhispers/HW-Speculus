@@ -7,6 +7,7 @@ import { clientLaunchPackage, parseOrbisLaunchPackage } from '../src/runtime/sch
 import type { OrbisLaunchPackage } from '../src/runtime/schema/types.js';
 import { generateThroughOrbis, type GenerationSession } from './providers/provider-service.js';
 import { createV2Router } from './v2/router.js';
+import { createV4Router } from './v4/router.js';
 
 const generationRequestSchema = z.object({
   provider: z.literal('orbis'),
@@ -95,8 +96,10 @@ export function createApp(options: { production?: boolean } = {}) {
   // Archived V2 sessions may contain long transcripts. Keep the larger parser scoped
   // to the trusted Orbis launch deposit rather than widening generation/API bodies.
   app.use('/api/v2/launch', express.json({ limit: '18mb' }));
+  app.use('/api/v4/launch', express.json({ limit: '18mb' }));
   app.use(express.json({ limit: '2mb' }));
   app.use('/api/v2', createV2Router(options));
+  app.use('/api/v4', createV4Router(options));
   app.get('/api/health', (_request, response) => response.json({ ok: true, service: 'speculus-api', launchBridge: true }));
 
   app.post('/api/launch', (request, response, next) => {
