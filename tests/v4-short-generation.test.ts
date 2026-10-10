@@ -47,8 +47,8 @@ describe('V4 short generation completion headroom', () => {
     expect(custom.outputBudget).toBe(128);
     expect(custom.outputContract.ceilingTokens).toBe(128);
 
-    const normalSession = session();
-    normalSession.settings = { ...normalSession.settings, output: 'normal', maxTokens: OUTPUT_PRESETS.normal };
+    const baseline = session();
+    const normalSession = { ...baseline, settings: { ...baseline.settings, output: 'normal' as const, maxTokens: OUTPUT_PRESETS.normal } };
     const normal = compileV4Context(normalSession, 'I wait.');
     expect(normal.outputBudget).toBe(OUTPUT_PRESETS.normal);
   });
