@@ -1,5 +1,5 @@
 import { getRelationship } from '../../runtime/relationships/core';
-import type { V4Session, V4Turn } from './session';
+import { OUTPUT_PRESETS, type V4Session, type V4Turn } from './session';
 import type { V4TurnResolution } from './resolution';
 import { selectV4ContextBlocks, type V4ContextBlock } from './context-blocks';
 import { V4_ANTI_SLOP_GUIDANCE } from './prose-quality';
@@ -318,6 +318,15 @@ function relevantDomainBlocks(session: V4Session): V4ContextBlock[] {
   return blocks;
 }
 
+// Short is a prose-length contract, not a tiny provider hard stop. Existing
+// autosaves retain maxTokens=256, so give those defaults completion headroom
+// without changing the saved preference or overriding custom advanced limits.
+export function v4ProviderOutputBudget(settings: Pick<V4Session['settings'], 'output' | 'maxTokens'>): number {
+  return settings.output === 'short' && settings.maxTokens === OUTPUT_PRESETS.short
+    ? 768
+    : settings.maxTokens;
+}
+
 export function v4OutputEnvelope(maxTokens: number) {
   const completionReserveTokens = Math.min(512, Math.max(8, Math.floor(maxTokens * 0.25)));
   return {
@@ -412,7 +421,7 @@ export function compileV4Context(
 ) {
   const { launch, world, settings } = session;
   const clock = worldClock(world);
-  const outputEnvelope = v4OutputEnvelope(settings.maxTokens);
+  const outputEnvelope = v4OutputEnvelope(v4ProviderOutputBudget(settings));
   const outputContract = outputContractFor(settings.output, outputEnvelope);
   const impersonatingPersona = mode === 'impersonate-persona';
   const skippingPersona = mode === 'skip-persona';
@@ -695,7 +704,7 @@ export function compileV4Context(
     included,
     omitted,
     estimatedInputTokens: selection.estimatedTokens,
-    outputBudget: settings.maxTokens,
+    outputBudget: outputEnvelope.hardLimitTokens,
     outputTarget: outputEnvelope.targetTokens,
     completionReserve: outputEnvelope.completionReserveTokens,
     outputPreset: settings.output,
