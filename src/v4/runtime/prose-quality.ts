@@ -63,10 +63,12 @@ export function v4ProseRepairPrompt(input: {
   targetTokens: number;
   hardLimitTokens: number;
   truncated: boolean;
+  overlongShort?: boolean;
   hits: V4ProseSlopHit[];
 }) {
   const reasons = [
     input.truncated ? 'The previous draft reached the hard ceiling before completing its current beat.' : '',
+    input.overlongShort ? 'The previous draft exceeded the SHORT preset. Reduce it to one immediate reaction or dialogue beat, with no recap or extra exchange.' : '',
     input.hits.length ? `It also used these stock constructions: ${input.hits.map((hit) => hit.label).join(', ')}.` : '',
   ].filter(Boolean).join(' ');
   return [
