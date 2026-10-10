@@ -42,9 +42,11 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld, speech }
     <section><h2>Generation</h2><dl className="v2-fields"><dt>Connection</dt><dd>NovelAI via Orbis</dd><dt>Model</dt><dd>{launch.model}</dd></dl>
       <span className="v2-field-label">Output length</span>
       <div className="v2-output" role="group" aria-label="Output length">{Object.entries(OUTPUT_PRESETS).map(([name, maxTokens]) => <button key={name} type="button" aria-pressed={settings.output === name && settings.maxTokens === maxTokens} onClick={() => onSettings({ output: name as V4Settings['output'], maxTokens })}>{name}</button>)}</div>
-      <small>{settings.maxTokens} output tokens. Presets change reply length, not session duration or context capacity.</small>
+      <small>{settings.output === 'short' && settings.maxTokens === OUTPUT_PRESETS.short
+        ? 'Short targets 80–160 tokens. The provider receives a 768-token ceiling to finish the reply without cutting it off.'
+        : `${settings.maxTokens} maximum output tokens. Presets change reply length, not session duration or context capacity.`}</small>
       <details className="v2-native"><summary>NovelAI settings</summary>
-        {numeric('Max output tokens', 'maxTokens', 32, 4096)}
+        {numeric('Output token limit (advanced)', 'maxTokens', 32, 4096)}
         {numeric('Temperature', 'temperature', 0, 2, 0.05)}{numeric('Top K', 'topK', 0, 1000)}{numeric('Top P', 'topP', 0, 1, 0.01)}
         {numeric('Presence penalty', 'presencePenalty', -2, 2, 0.1)}{numeric('Frequency penalty', 'frequencyPenalty', -2, 2, 0.1)}
         <label className="v2-check"><input type="checkbox" checked={settings.continueToEndOfSentence} onChange={(event) => onSettings({ continueToEndOfSentence: event.target.checked })} /> Ask for a complete final sentence</label>
