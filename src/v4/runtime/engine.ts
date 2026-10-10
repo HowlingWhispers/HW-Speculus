@@ -158,7 +158,7 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
     text: options.editedReply, metadata: { provider: provider.kind, model: workingSession.launch.model, endpoint: 'local-reply-edit', durationMs: 0, completionStatus: 'completed' },
   } : await provider.generate({
     prompt: compiled.prompt, model: workingSession.launch.model,
-    temperature: settings.temperature, maxTokens: settings.maxTokens, topK: settings.topK, topP: settings.topP,
+    temperature: settings.temperature, maxTokens: compiled.outputBudget, topK: settings.topK, topP: settings.topP,
     presencePenalty: settings.presencePenalty, frequencyPenalty: settings.frequencyPenalty,
     stopSequences: [...settings.stopSequences],
     continueToEndOfSentence: settings.continueToEndOfSentence, reroll: options.reroll, signal: options.signal,
@@ -168,23 +168,32 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   const initialSlopHits = detectV4ProseSlop(initialDecoded);
   const truncated = result.metadata.completionStatus === 'max_tokens';
   const proseRepairNeeded = needsV4ProseRepair(initialSlopHits);
+  const overlongShort = settings.output === 'short'
+    && approximateV4OutputTokens(initialDecoded) > compiled.outputContract.targetMaxTokens + 40;
   const repairedReasons: string[] = [];
-  if (options.editedReply === undefined && (truncated || proseRepairNeeded)) {
+  if (options.editedReply === undefined && (truncated || proseRepairNeeded || overlongShort)) {
     if (truncated) repairedReasons.push('hard-ceiling truncation');
     if (proseRepairNeeded) repairedReasons.push(`${initialSlopHits.length} stock prose constructions`);
+    if (overlongShort) repairedReasons.push('overlong short-preset output');
     const firstDurationMs = result.metadata.durationMs;
+    // A second attempt at the same ceiling can fail in exactly the same place.
+    // Only for a truncated short turn, give its one bounded repair extra room.
+    const repairMaxTokens = truncated && settings.output === 'short'
+      ? Math.min(4096, compiled.outputBudget * 2)
+      : compiled.outputBudget;
     result = await provider.generate({
       prompt: v4ProseRepairPrompt({
         originalPrompt: compiled.prompt,
         draft: initialDecoded,
         targetTokens: compiled.outputContract.targetMaxTokens,
-        hardLimitTokens: compiled.outputContract.ceilingTokens,
+        hardLimitTokens: repairMaxTokens,
         truncated,
+        overlongShort,
         hits: initialSlopHits,
       }),
       model: workingSession.launch.model,
       temperature: Math.min(settings.temperature, 0.65),
-      maxTokens: settings.maxTokens,
+      maxTokens: repairMaxTokens,
       topK: settings.topK,
       topP: settings.topP,
       presencePenalty: 0,
@@ -282,6 +291,9 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   // Marathons frequently stop far too early. maxTokens alone cannot detect that,
   // so flag a hard-stop that landed well under the requested depth.
   const stoppedExtremelyEarly = approximateOutputTokens < Math.floor(compiled.outputContract.targetMinTokens * 0.5);
+  if (outputCompliance.preset === 'short' && outputCompliance.band === 'over-target') {
+    warnings.push(`Short preset targeted ${compiled.outputContract.targetMinTokens}-${compiled.outputContract.targetMaxTokens} tokens, but the provider returned roughly ${approximateOutputTokens}. The single bounded repair was not repeated.`);
+  }
   if (outputCompliance.preset === 'marathon' && stoppedExtremelyEarly) {
     warnings.push(`Marathon requested ${compiled.outputContract.targetMinTokens}-${compiled.outputContract.targetMaxTokens} tokens but the provider produced roughly ${approximateOutputTokens}. The provider stopped early; generated text was not padded and no extra scene progression was invented.`);
   }
