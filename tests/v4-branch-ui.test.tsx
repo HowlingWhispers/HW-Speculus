@@ -44,7 +44,7 @@ function mockLaunchResponse(pkg: unknown) {
 }
 function mockGenerateResponse(text = '*She smiles.* "Durable welcome."') {
   return new Response(JSON.stringify({ text, metadata: {
-    provider: 'orbis', model: 'mock', durationMs: 1, completionStatus: 'stop',
+    provider: 'orbis', model: 'mock', durationMs: 1, completionStatus: 'completed',
   } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 

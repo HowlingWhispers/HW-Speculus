@@ -2,6 +2,12 @@
 
 Speculus uses a human-readable release version plus a 7-character Git build id shown in the terminal, for example `v0.2.0+5890c7b`.
 
+## Unreleased: V4 Response Length Correction
+
+- Apply the selected output mode independently of history length, using a soft midpoint target and natural complete beats.
+- Give V4 generation one shared original-plus-one-repair budget; truncation regeneration uses a substantially shorter numeric target, while formatting-only repair preserves prose and roles.
+- Preserve existing preset/custom hard ceilings. Targets are guidance, not live-provider length guarantees; V1-V3 remain frozen.
+
 ## 0.4.2 — 2026-09-28
 
 - Add phone-only Main, Setup and Diagnostics screens with touch-sized controls and a Back to Orbis button that saves before leaving.

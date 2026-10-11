@@ -5,6 +5,7 @@ import { selectV4ContextBlocks, type V4ContextBlock } from './context-blocks';
 import { V4_ANTI_SLOP_GUIDANCE } from './prose-quality';
 import { isSkippedPersonaTurn, skippedPersonaActorId } from './turn-control';
 import { assetsFor, perceptionFor, worldClock } from './world';
+import { V4_ROLEPLAY_FORMAT_CONTRACT } from './output-format';
 
 export const CONTEXT_CHARACTER_BUDGET = 28_000;
 export const V4_RECENT_EXCHANGE_COUNT = 4;
@@ -340,8 +341,7 @@ export type V4OutputContract = {
 
 /**
  * The numeric ceiling is not a writing instruction. Each preset carries its own
- * explicit shape contract so the model is told how to behave, not just how much
- * room it has. Marathons expand depth inside the current beat, never time.
+ * independent soft band. History supplies continuity, never a length template.
  */
 export function outputContractFor(preset: V4OutputPreset, envelope: { hardLimitTokens: number; targetTokens: number }): V4OutputContract {
   const base = { preset, ceilingTokens: envelope.hardLimitTokens, paragraphs: '', emphasis: [] as string[] };
@@ -356,7 +356,7 @@ export function outputContractFor(preset: V4OutputPreset, envelope: { hardLimitT
     return {
       ...base,
       ...boundedRange(80, 160),
-      paragraphs: 'usually 1-2 short paragraphs',
+      paragraphs: 'natural paragraph breaks, no paragraph quota',
       emphasis: [
         'Write one immediate action, reaction, or dialogue beat and stop.',
         'No recap, no scene expansion, no extra conversational exchange.',
@@ -368,7 +368,7 @@ export function outputContractFor(preset: V4OutputPreset, envelope: { hardLimitT
     return {
       ...base,
       ...boundedRange(450, 800),
-      paragraphs: 'usually 4-7 readable paragraphs',
+      paragraphs: 'natural paragraph breaks, no paragraph quota',
       emphasis: [
         'Develop deeper description, reactions and atmosphere around the current beat.',
         'Still do not advance multiple turns or finish an entire scene.',
@@ -379,7 +379,7 @@ export function outputContractFor(preset: V4OutputPreset, envelope: { hardLimitT
     return {
       ...base,
       ...boundedRange(900, 1600),
-      paragraphs: 'several readable paragraphs',
+      paragraphs: 'natural paragraph breaks, no paragraph quota',
       emphasis: [
         'MARATHON means write substantially more about the current playable beat. Expand DEPTH, not TIME.',
         'Add richer sensory and environmental detail, physical reactions, dialogue texture and scene detail.',
@@ -392,7 +392,7 @@ export function outputContractFor(preset: V4OutputPreset, envelope: { hardLimitT
     ...base,
     preset: 'normal',
     ...boundedRange(220, 400),
-    paragraphs: 'usually 2-4 readable paragraphs',
+    paragraphs: 'natural paragraph breaks, no paragraph quota',
     emphasis: [
       'Deliver one immediate playable beat with moderate description.',
     ],
@@ -432,8 +432,10 @@ export function compileV4Context(
       : resolution?.subjectPerception ?? (subjectActorId ? perceptionFor(world, subjectActorId) : null);
 
   const outputRules = [
-    `PRESET: ${outputContract.preset.toUpperCase()}. Target ~${outputContract.targetMaxTokens} tokens, hard ceiling ${outputEnvelope.hardLimitTokens} tokens.`,
-    'Finish the current beat naturally. Close all quotes/actions/brackets before stopping. Do not pad or start a new exchange.',
+    `PRESET: ${outputContract.preset.toUpperCase()}. Independent soft band ${outputContract.targetMinTokens}-${outputContract.targetMaxTokens} tokens; aim near midpoint ~${Math.round((outputContract.targetMinTokens + outputContract.targetMaxTokens) / 2)} tokens, not a quota. Hard ceiling ${outputEnvelope.hardLimitTokens} tokens.`,
+    'Reapply the selected preset independently on EVERY generation. History supplies facts, personality and scene continuity, NEVER previous reply length or a paragraph template. Do not progressively grow replies or copy the last reply size.',
+    'Finish one natural complete playable beat while preserving personality, dialogue and scene texture. Close all quotes/actions/brackets before stopping. Do not pad, recap or start a new exchange.',
+    V4_ROLEPLAY_FORMAT_CONTRACT,
     ...V4_ANTI_SLOP_GUIDANCE,
   ];
 

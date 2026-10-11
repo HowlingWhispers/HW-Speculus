@@ -30,7 +30,7 @@ describe('V4 speech controls', () => {
     const cancel = vi.fn();
     vi.stubGlobal('speechSynthesis', { speak, cancel, getVoices: () => [], addEventListener: vi.fn(), removeEventListener: vi.fn() });
     vi.stubGlobal('SpeechSynthesisUtterance', class { constructor(readonly text: string) {} });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ text: '*She smiles.* "Welcome."', metadata: { provider: 'orbis', model: 'mock', durationMs: 1, completionStatus: 'stop' } }), { status: 200 })));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ text: '*She smiles.* "Welcome."', metadata: { provider: 'orbis', model: 'mock', durationMs: 1, completionStatus: 'completed' } }), { status: 200 })));
     render(<V4App />);
     const input = await screen.findByLabelText('Your next turn');
     expect(speak).not.toHaveBeenCalled();

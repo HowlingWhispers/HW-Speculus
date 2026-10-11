@@ -1,7 +1,8 @@
 import type { ProviderAdapter } from '../../runtime/providers/types';
 import { compileV4Context, CONTEXT_CHARACTER_BUDGET } from './context';
-import { decodeV4SerializedRoleplayArtifacts, normalizeV4RoleplayFormat, stripV4ProtocolArtifacts, type EnginePhase } from './engine';
+import { decodeV4SerializedRoleplayArtifacts, stripV4ProtocolArtifacts, validateV4Reply, type EnginePhase } from './engine';
 import { settingsSchema, type V4Session } from './session';
+import { assertV4NotCancelled, generateV4Output } from './generation';
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const RESPONSE_MARKER = '\n[IN-WORLD RESPONSE]\n';
@@ -49,25 +50,36 @@ export async function generateV4PersonaDraft(session: V4Session, provider: Provi
   const compiled = compileV4Context(session, '', 'impersonate-persona');
   const prompt = withExistingPersonaDraft(compiled.prompt, session.draft);
   options.onPhase?.('generate');
-  const result = await provider.generate({
+  const generated = await generateV4Output(provider, {
     prompt, model: session.launch.model,
     temperature: settings.temperature, maxTokens: settings.maxTokens, topK: settings.topK, topP: settings.topP,
     presencePenalty: settings.presencePenalty, frequencyPenalty: settings.frequencyPenalty,
     stopSequences: [...settings.stopSequences], continueToEndOfSentence: settings.continueToEndOfSentence,
     signal: options.signal,
+  }, compiled.outputContract, {
+    fixedPrefix: session.draft,
+    inspect(raw, repair) {
+      const decoded = stripV4ProtocolArtifacts(decodeV4SerializedRoleplayArtifacts(raw.trim()));
+      const combined = repair && session.draft.trim() ? decoded : mergePersonaDraft(session.draft, decoded);
+      if (repair && session.draft.trim() && !combined.startsWith(session.draft)) {
+        throw new Error('The player draft repair changed the fixed operator-authored prefix.');
+      }
+      const issues = [...validateV4Reply(raw, session.launch.persona.name), ...validateV4Reply(combined, session.launch.persona.name)];
+      if (issues.length) throw new Error(issues.join(' '));
+      validatePersonaDraft(decoded, session);
+      validatePersonaDraft(combined, session);
+      if (combined.length > 16000) throw new Error('The generated player draft exceeds the composer limit.');
+      return combined;
+    },
   });
   if (options.signal?.aborted) throw new Error('Generation cancelled. The composer was not changed.');
 
   options.onPhase?.('validate');
-  const raw = result.text.trim();
-  const decoded = stripV4ProtocolArtifacts(decodeV4SerializedRoleplayArtifacts(raw));
-  if (!decoded) throw new Error('The model returned an empty player draft.');
-  if (result.metadata.completionStatus === 'max_tokens') {
-    throw new Error('The generated player draft reached the hard output ceiling and was discarded instead of inserting a cut-off turn. Try again or use a larger output preset.');
-  }
-  if (/<\|(?:user|assistant|system|im_start|im_end)\|>|<\/?(?:world_state|state_patch|analysis)>/i.test(decoded)) {
-    throw new Error('The generated player draft exposed control data and was rejected.');
-  }
+  assertV4NotCancelled(options.signal);
+  return generated.text;
+}
+
+function validatePersonaDraft(decoded: string, session: V4Session) {
   const personaName = session.launch.persona.name.trim();
   if (personaName && new RegExp(`^\\s*${escapeRegExp(personaName)}\\s*:`, 'im').test(decoded)) {
     throw new Error('The generated player draft used a speaker label instead of direct roleplay prose.');
@@ -83,8 +95,4 @@ export async function generateV4PersonaDraft(session: V4Session, provider: Provi
   if (/^\s*(?:SIMULATION NARRATOR|NARRATOR)\s*:/im.test(decoded)) {
     throw new Error('The generated player draft tried to write the narrator turn.');
   }
-  const continuation = normalizeV4RoleplayFormat(decoded);
-  const combined = mergePersonaDraft(session.draft, continuation);
-  if (combined.length > 16000) throw new Error('The generated player draft exceeds the composer limit.');
-  return combined;
 }

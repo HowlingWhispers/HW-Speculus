@@ -21,7 +21,7 @@ const futureReply = '*She looks up.* "Original future remains here."';
 const alternativeReply = '*She smiles.* "Alternative first minute."';
 
 function response(text: string) {
-  return new Response(JSON.stringify({ text, metadata: { provider: 'orbis', model: 'mock', durationMs: 1, completionStatus: 'stop' } }), { status: 200 });
+  return new Response(JSON.stringify({ text, metadata: { provider: 'orbis', model: 'mock', durationMs: 1, completionStatus: 'completed' } }), { status: 200 });
 }
 beforeEach(async () => {
   vi.resetModules();

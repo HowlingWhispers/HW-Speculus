@@ -7,9 +7,10 @@ import { rollbackTurnOwnedActions, settingsSchema, type V4Diagnostics, type V4Se
 import { SKIPPED_PERSONA_TURN, isSkippedPersonaTurn, skippedPersonaActorId, skippedPersonaTurnAs } from './turn-control';
 import { deriveStateProposals } from './state-review';
 import { approximateV4OutputTokens, countV4Paragraphs, normalizeV4Paragraphs } from './paragraphs';
-import { detectV4ProseSlop, needsV4ProseRepair, v4ProseRepairPrompt } from './prose-quality';
+import { detectV4ProseSlop, needsV4ProseRepair } from './prose-quality';
 import { resolutionSchema, sameState } from './boundaries';
 import { assertWorldCanon } from './world';
+import { assertV4NotCancelled, generateV4Output } from './generation';
 
 export type EnginePhase = 'resolve' | 'context' | 'generate' | 'validate' | 'commit';
 export class V4DraftRejected extends Error {
@@ -154,57 +155,33 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   const compiled = compileV4Context(resolvedSession, player, skipPersona ? 'skip-persona' : 'normal', resolved.resolution);
   options.onPhase?.('generate');
   if (options.signal?.aborted) throw new Error('Generation cancelled. No provider call was made.');
-  let result: ProviderResult = options.editedReply !== undefined ? {
-    text: options.editedReply, metadata: { provider: provider.kind, model: workingSession.launch.model, endpoint: 'local-reply-edit', durationMs: 0, completionStatus: 'completed' },
-  } : await provider.generate({
+  const generated = options.editedReply !== undefined ? null : await generateV4Output(provider, {
     prompt: compiled.prompt, model: workingSession.launch.model,
     temperature: settings.temperature, maxTokens: settings.maxTokens, topK: settings.topK, topP: settings.topP,
     presencePenalty: settings.presencePenalty, frequencyPenalty: settings.frequencyPenalty,
     stopSequences: [...settings.stopSequences],
     continueToEndOfSentence: settings.continueToEndOfSentence, reroll: options.reroll, signal: options.signal,
+  }, compiled.outputContract, {
+    inspect(raw) {
+      const decoded = stripV4ProtocolArtifacts(decodeV4SerializedRoleplayArtifacts(raw.trim()));
+      const issues = [...validateV4Reply(raw, workingSession.launch.persona.name), ...validateV4Reply(decoded, workingSession.launch.persona.name)];
+      if (issues.length) throw new Error(issues.join(' '));
+      return decoded;
+    },
   });
+  const result: ProviderResult = generated?.result ?? {
+    text: options.editedReply ?? '', metadata: { provider: provider.kind, model: workingSession.launch.model, endpoint: 'local-reply-edit', durationMs: 0, completionStatus: 'completed' },
+  };
   if (options.signal?.aborted) throw new Error('Generation cancelled. No turn or state was committed.');
-  const initialDecoded = stripV4ProtocolArtifacts(decodeV4SerializedRoleplayArtifacts(result.text.trim()));
-  const initialSlopHits = detectV4ProseSlop(initialDecoded);
-  const truncated = result.metadata.completionStatus === 'max_tokens';
-  const proseRepairNeeded = needsV4ProseRepair(initialSlopHits);
-  const repairedReasons: string[] = [];
-  if (options.editedReply === undefined && (truncated || proseRepairNeeded)) {
-    if (truncated) repairedReasons.push('hard-ceiling truncation');
-    if (proseRepairNeeded) repairedReasons.push(`${initialSlopHits.length} stock prose constructions`);
-    const firstDurationMs = result.metadata.durationMs;
-    result = await provider.generate({
-      prompt: v4ProseRepairPrompt({
-        originalPrompt: compiled.prompt,
-        draft: initialDecoded,
-        targetTokens: compiled.outputContract.targetMaxTokens,
-        hardLimitTokens: compiled.outputContract.ceilingTokens,
-        truncated,
-        hits: initialSlopHits,
-      }),
-      model: workingSession.launch.model,
-      temperature: Math.min(settings.temperature, 0.65),
-      maxTokens: settings.maxTokens,
-      topK: settings.topK,
-      topP: settings.topP,
-      presencePenalty: 0,
-      frequencyPenalty: 0,
-      stopSequences: [...settings.stopSequences],
-      continueToEndOfSentence: false,
-      reroll: false,
-      signal: options.signal,
-    });
-    result = { ...result, metadata: { ...result.metadata, durationMs: firstDurationMs + result.metadata.durationMs } };
-    if (options.signal?.aborted) throw new Error('Generation cancelled. No turn or state was committed.');
-  }
   options.onPhase?.('validate');
+  assertV4NotCancelled(options.signal);
   const rawReply = result.text.trim();
   const rawIssues = validateV4Reply(rawReply, workingSession.launch.persona.name);
   const decodedReply = decodeV4SerializedRoleplayArtifacts(rawReply);
   const sanitizedReply = stripV4ProtocolArtifacts(decodedReply);
   const decodedIssues = validateV4Reply(sanitizedReply, workingSession.launch.persona.name);
   const canNormalize = result.metadata.completionStatus !== 'max_tokens' && rawIssues.length === 0 && decodedIssues.length === 0;
-  const roleplayNormalized = canNormalize ? normalizeV4RoleplayFormat(sanitizedReply) : sanitizedReply;
+  const roleplayNormalized = canNormalize && !generated ? normalizeV4RoleplayFormat(sanitizedReply) : sanitizedReply;
   // Conservative readability pass. Only inserts paragraph breaks; never rewords.
   const paragraphPass = canNormalize
     ? normalizeV4Paragraphs(roleplayNormalized)
@@ -217,7 +194,7 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   const warnings = ['Semantic canon claim validation is not complete. Generated prose remains downstream of and non-authoritative over physical state.'];
   const remainingSlopHits = detectV4ProseSlop(normalizedReply);
   if (needsV4ProseRepair(remainingSlopHits)) {
-    warnings.push(`The bounded repair still contains structural prose repetition (${remainingSlopHits.map((hit) => hit.label).join(', ')}); no further rewrite was attempted.`);
+    warnings.push(`The draft contains structural prose repetition (${remainingSlopHits.map((hit) => hit.label).join(', ')}); this is advisory only and no style rewrite was attempted.`);
   }
   if (resolved.resolution.deferredClaims.length) warnings.push(...resolved.resolution.deferredClaims);
   if (skipPersona) {
@@ -235,7 +212,7 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   if (sanitizedReply !== decodedReply) warnings.push('Legacy Speculus turn/control markers were stripped before commit.');
   if (canNormalize && roleplayNormalized !== sanitizedReply) warnings.push('Roleplay formatting was normalized before commit so narration/action, dialogue and inner voice remain structurally distinct.');
   if (paragraphPass.applied) warnings.push(`Paragraph readability pass inserted ${paragraphPass.splitParagraphs} paragraph break(s). Wording was not changed.`);
-  if (repairedReasons.length) warnings.push(`One bounded prose repair was used for ${repairedReasons.join(' and ')}.`);
+  if (generated) warnings.push(`V4 generation used ${generated.attempts} upstream attempt(s)${generated.reason ? `; one repair for ${generated.reason}` : '; no repair'}.`);
   if (compiled.omitted.length) warnings.push('Some history/canon was omitted. Inspect the Context tab for the exact list.');
   const at = options.now ?? Date.now();
   let relationships = relationshipBase;
@@ -359,5 +336,6 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
       }],
   };
   options.onCheckpoints?.(structuredClone({ before: base, resolved: resolvedSession, after: committed, resolution: resolved.resolution }));
+  assertV4NotCancelled(options.signal);
   return committed;
 }

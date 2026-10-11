@@ -17,28 +17,49 @@ function extractText(value: unknown): string {
   return '';
 }
 
-function extractCompletion(value: unknown): Pick<SafeProviderMetadata, 'completionStatus' | 'finishReason'> {
+const VALID_COMPLETION_STATUSES = new Set<SafeProviderMetadata['completionStatus']>(['completed', 'max_tokens', 'timeout', 'cancelled', 'bridge_interruption', 'unknown']);
+
+export function extractCompletion(value: unknown): Pick<SafeProviderMetadata, 'completionStatus' | 'finishReason'> {
   if (!value || typeof value !== 'object') return { completionStatus: 'unknown' };
   const record = value as Record<string, unknown>;
   const nested = record.metadata && typeof record.metadata === 'object'
     ? record.metadata as Record<string, unknown>
     : {};
+
+  // Read explicit top-level/nested completion status first. Failure and
+  // truncation evidence always overrides a success claim; contradictory or
+  // invalid metadata must never become `completed`.
+  const explicitValues = [record.completionStatus, nested.completionStatus].filter((value) => value !== undefined);
+  const invalid = explicitValues.some((value) => typeof value !== 'string' || !VALID_COMPLETION_STATUSES.has(value as SafeProviderMetadata['completionStatus']))
+    || [record.truncated, nested.truncated].some((value) => value !== undefined && typeof value !== 'boolean')
+    || [record.finishReason, record.finish_reason, record.stopReason, record.stop_reason,
+      nested.finishReason, nested.finish_reason, nested.stopReason, nested.stop_reason]
+      .some((value) => value !== undefined && typeof value !== 'string');
+
   const raw = record.finishReason ?? record.finish_reason ?? record.stopReason ?? record.stop_reason
     ?? nested.finishReason ?? nested.finish_reason ?? nested.stopReason ?? nested.stop_reason;
   const finishReason = typeof raw === 'string' ? raw : undefined;
-  const reason = finishReason?.toLocaleLowerCase('en-US');
-  if (record.truncated === true || nested.truncated === true || reason === 'length' || reason === 'max_tokens' || reason === 'token_limit') {
-    return { completionStatus: 'max_tokens', finishReason };
+
+  const signals = [...explicitValues];
+  // Inspect every reason, not just the preferred display reason.
+  for (const value of [record.finishReason, record.finish_reason, record.stopReason, record.stop_reason,
+    nested.finishReason, nested.finish_reason, nested.stopReason, nested.stop_reason]) {
+    const normalized = typeof value === 'string' ? value.toLowerCase() : '';
+    if (['length', 'max_tokens', 'token_limit'].includes(normalized)) signals.push('max_tokens');
+    else if (normalized === 'timeout') signals.push('timeout');
+    else if (['cancelled', 'canceled'].includes(normalized)) signals.push('cancelled');
+    else if (['interrupted', 'bridge_interruption', 'error'].includes(normalized)) signals.push('bridge_interruption');
+    else if (['stop', 'complete', 'completed', 'end_turn', 'eos'].includes(normalized)) signals.push('completed');
   }
-  if (reason === 'timeout') return { completionStatus: 'timeout', finishReason };
-  if (reason === 'cancelled' || reason === 'canceled') return { completionStatus: 'cancelled', finishReason };
-  if (reason === 'interrupted' || reason === 'bridge_interruption' || reason === 'error') {
-    return { completionStatus: 'bridge_interruption', finishReason };
+  if (record.truncated === true || nested.truncated === true) signals.push('max_tokens');
+  // Never regenerate a known failed/interrupted draft, even when truncated too.
+  for (const status of ['cancelled', 'timeout', 'bridge_interruption'] as const) {
+    if (signals.includes(status)) return { completionStatus: status, finishReason };
   }
-  if (reason === 'stop' || reason === 'complete' || reason === 'completed' || reason === 'end_turn' || reason === 'eos') {
-    return { completionStatus: 'completed', finishReason };
-  }
-  return { completionStatus: 'unknown', finishReason };
+  if (invalid) return { completionStatus: 'bridge_interruption', finishReason };
+  if (signals.includes('max_tokens')) return { completionStatus: 'max_tokens', finishReason };
+  if (signals.includes('unknown')) return { completionStatus: 'unknown', finishReason };
+  return { completionStatus: signals.includes('completed') ? 'completed' : 'unknown', finishReason };
 }
 
 export async function generateThroughOrbis(session: GenerationSession, request: ProviderRequest): Promise<ProviderResult> {
