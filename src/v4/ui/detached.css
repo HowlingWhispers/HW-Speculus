@@ -80,3 +80,5 @@
     padding-bottom: 4px;
   }
 }
+
+.spec-v2.v2-detached-reader .v2-prose.v4-generated-prose { font-size: var(--v4-generated-text-font-size, 20px); }

@@ -98,6 +98,10 @@ export function SettingsPanel({ session, disabled, onSettings, onWorld, speech }
       </div>
     </details></section>
     <section><h2>Display</h2>
+      <label className="v2-field"><span>Generated AI reply text size</span><input aria-label="Generated AI reply text size" type="range" min={14} max={32} step={1} value={settings.generatedTextFontSize} onChange={(event) => {
+        const value = event.target.valueAsNumber;
+        if (Number.isInteger(value) && value >= 14 && value <= 32) onSettings({ generatedTextFontSize: value });
+      }} /><span>{settings.generatedTextFontSize}px</span></label>
       <label className="v2-check"><input type="checkbox" checked={settings.speechEnabled} disabled={!speech?.supported} onChange={(event) => onSettings({ speechEnabled: event.target.checked })} /> Read new replies aloud</label>
       {!speech?.supported && <small>Browser speech synthesis is unavailable.</small>}
       <label className="v2-field"><span>Speech voice</span><select aria-label="Speech voice" disabled={!speech?.supported || !settings.speechEnabled} value={settings.speechVoiceUri ?? ''} onChange={(event) => onSettings({ speechVoiceUri: event.target.value || undefined })}>

@@ -7,6 +7,7 @@ import { stateProposalsSchema, type V4StateProposal } from './state-proposals';
 
 export const OUTPUT_PRESETS = { short: 256, normal: 512, long: 1024, marathon: 2048 } as const;
 export const DEFAULT_TEXT_COLORS = { actionColor: '#d6d1c3', dialogueColor: '#f3e7ad', thoughtColor: '#a9c7d8' } as const;
+export const DEFAULT_GENERATED_TEXT_FONT_SIZE = 20;
 const colorSchema = z.string().regex(/^#[0-9a-f]{6}$/i);
 export const settingsSchema = z.object({
   output: z.enum(['short', 'normal', 'long', 'marathon']).default('normal'),
@@ -20,6 +21,7 @@ export const settingsSchema = z.object({
   actionColor: colorSchema.default(DEFAULT_TEXT_COLORS.actionColor),
   dialogueColor: colorSchema.default(DEFAULT_TEXT_COLORS.dialogueColor),
   thoughtColor: colorSchema.default(DEFAULT_TEXT_COLORS.thoughtColor),
+  generatedTextFontSize: z.number().int().min(14).max(32).default(DEFAULT_GENERATED_TEXT_FONT_SIZE),
   speechEnabled: z.boolean().default(false),
   speechRate: z.number().min(0.5).max(2).default(1),
   speechVoiceUri: z.string().max(1000).optional(),

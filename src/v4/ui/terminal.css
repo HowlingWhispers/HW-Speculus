@@ -525,3 +525,4 @@ body:has(.spec-v2) { margin: 0; background: #070a0f; }
 .v4-page-controls span { font-size: 11px; color: var(--v2-muted); }
 .v4-history-editor textarea { min-height: 140px; }
 .v4-branch-switcher { margin: 6px 18px; }
+.spec-v2 .v2-prose.v4-generated-prose { font-size: var(--v4-generated-text-font-size, 20px); }

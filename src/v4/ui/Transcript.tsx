@@ -32,6 +32,7 @@ export function V4Transcript({ session, busy, speech, onFork, canFork, branch, p
     '--v2-action-color': session.settings.actionColor,
     '--v2-dialogue-color': session.settings.dialogueColor,
     '--v2-thought-color': session.settings.thoughtColor,
+    '--v4-generated-text-font-size': `${session.settings.generatedTextFontSize}px`,
   } as CSSProperties;
   return <div className="v2-transcript" style={textColors} ref={scroll} role="log" aria-label="Roleplay transcript" aria-live="polite" onScroll={() => {
     const node = scroll.current;
@@ -60,7 +61,7 @@ export function V4Transcript({ session, busy, speech, onFork, canFork, branch, p
       {isSkippedPersonaTurn(player)
         ? <article className="v2-message v2-player v2-skipped-turn"><header>Player / {session.launch.persona.name}<span>Turn {String(index + 1).padStart(3, '0')}</span></header><div className="v2-skip-note">Persona turn skipped by operator</div></article>
         : <article className="v2-message v2-player"><header>Player / {session.launch.persona.name}<span>Turn {String(index + 1).padStart(3, '0')}</span></header><div className="v2-prose"><RoleplayText text={player} /></div></article>}
-      <article className="v2-message"><header>{subject}<span>State r{page?.worldRevision ?? turn.worldRevision}</span></header><div className="v2-prose"><RoleplayText text={reply} /></div>
+      <article className="v2-message"><header>{subject}<span>State r{page?.worldRevision ?? turn.worldRevision}</span></header><div className="v2-prose v4-generated-prose"><RoleplayText text={reply} /></div>
         {canonical && <div className="v4-page-controls" role="group" aria-label={`Turn ${index + 1} pages`}>
           <button type="button" aria-label={`Previous page for turn ${index + 1}`} disabled={busy || pageIndex <= 0} onClick={() => onPreview?.(turn.id, canonical.pages[pageIndex - 1].id)}>Previous</button>
           <span>Page {pageIndex + 1} / {canonical.pages.length} / {preview ? 'Preview only' : 'Active'}</span>
