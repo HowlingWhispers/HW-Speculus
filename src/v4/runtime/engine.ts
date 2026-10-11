@@ -157,7 +157,7 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   if (options.signal?.aborted) throw new Error('Generation cancelled. No provider call was made.');
   const generated = options.editedReply !== undefined ? null : await generateV4Output(provider, {
     prompt: compiled.prompt, model: workingSession.launch.model,
-    temperature: settings.temperature, maxTokens: settings.maxTokens, topK: settings.topK, topP: settings.topP,
+    temperature: settings.temperature, maxTokens: compiled.outputBudget, topK: settings.topK, topP: settings.topP,
     presencePenalty: settings.presencePenalty, frequencyPenalty: settings.frequencyPenalty,
     stopSequences: [...settings.stopSequences],
     continueToEndOfSentence: settings.continueToEndOfSentence, reroll: options.reroll, signal: options.signal,
@@ -259,6 +259,9 @@ export async function generateV4Turn(session: V4Session, provider: ProviderAdapt
   // Marathons frequently stop far too early. maxTokens alone cannot detect that,
   // so flag a hard-stop that landed well under the requested depth.
   const stoppedExtremelyEarly = approximateOutputTokens < Math.floor(compiled.outputContract.targetMinTokens * 0.5);
+  if (outputCompliance.preset === 'short' && outputCompliance.band === 'over-target') {
+    warnings.push(`Short preset targeted ${compiled.outputContract.targetMinTokens}-${compiled.outputContract.targetMaxTokens} tokens, but the provider returned roughly ${approximateOutputTokens}. This is advisory only; no length rewrite was attempted.`);
+  }
   if (outputCompliance.preset === 'marathon' && stoppedExtremelyEarly) {
     warnings.push(`Marathon requested ${compiled.outputContract.targetMinTokens}-${compiled.outputContract.targetMaxTokens} tokens but the provider produced roughly ${approximateOutputTokens}. The provider stopped early; generated text was not padded and no extra scene progression was invented.`);
   }

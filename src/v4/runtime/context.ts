@@ -319,6 +319,11 @@ function relevantDomainBlocks(session: V4Session): V4ContextBlock[] {
   return blocks;
 }
 
+// Soft writing targets leave completion headroom inside the selected ceiling.
+export function v4ProviderOutputBudget(settings: Pick<V4Session['settings'], 'output' | 'maxTokens'>): number {
+  return settings.maxTokens;
+}
+
 export function v4OutputEnvelope(maxTokens: number) {
   const completionReserveTokens = Math.min(512, Math.max(8, Math.floor(maxTokens * 0.25)));
   return {
@@ -412,7 +417,7 @@ export function compileV4Context(
 ) {
   const { launch, world, settings } = session;
   const clock = worldClock(world);
-  const outputEnvelope = v4OutputEnvelope(settings.maxTokens);
+  const outputEnvelope = v4OutputEnvelope(v4ProviderOutputBudget(settings));
   const outputContract = outputContractFor(settings.output, outputEnvelope);
   const impersonatingPersona = mode === 'impersonate-persona';
   const skippingPersona = mode === 'skip-persona';
@@ -697,7 +702,7 @@ export function compileV4Context(
     included,
     omitted,
     estimatedInputTokens: selection.estimatedTokens,
-    outputBudget: settings.maxTokens,
+    outputBudget: outputEnvelope.hardLimitTokens,
     outputTarget: outputEnvelope.targetTokens,
     completionReserve: outputEnvelope.completionReserveTokens,
     outputPreset: settings.output,
