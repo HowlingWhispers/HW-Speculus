@@ -47,3 +47,28 @@ export function assertV4FormattingOnly(original: string, repaired: string) {
     throw new Error('V4 formatting repair changed prose content or an established role. The draft was discarded before commit.');
   }
 }
+
+/**
+ * Split clearly spoken dialogue out of accidentally nested action markup.
+ * Never ask an AI to rewrite a draft when a delimiter-only repair is provable.
+ * Bare prose, ambiguous quotes and incomplete drafts are deliberately not guessed.
+ */
+export function tryV4LocalRoleplayRepair(draft: string): string | null {
+  if (v4RoleplayFormattingIssues(draft).length === 0) return null;
+  let changed = draft.replace(
+    /\*([^*\[\]"“”\n]*?)("[^"\n]+"|“[^”\n]+”)([^*\[\]"“”\n]*?)\*/gu,
+    (whole, before: string, dialogue: string, after: string) => {
+      if (!/\b(?:says?|said|asks?|asked|replies?|replied|whispers?|whispered|shouts?|shouted|calls?|called|murmurs?|murmured|mutters?|muttered|answers?|answered|tells?|told|speaks?|spoke|states?|stated)\b/i.test(before)) return whole;
+      return `${before.trim() ? `*${before.trim()}* ` : ''}${dialogue}${after.trim() ? ` *${after.trim()}*` : ''}`;
+    },
+  );
+  // A complete, single-line action occasionally loses only its closing star.
+  if (/^\*[^*"“”\[\]\n]+[.!?]$/u.test(changed)) changed += '*';
+  if (changed === draft || v4RoleplayFormattingIssues(changed).length > 0) return null;
+  try {
+    assertV4FormattingOnly(draft, changed);
+    return changed;
+  } catch {
+    return null;
+  }
+}

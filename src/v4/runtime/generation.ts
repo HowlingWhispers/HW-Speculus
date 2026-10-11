@@ -1,6 +1,6 @@
 import type { ProviderAdapter, ProviderRequest, ProviderResult } from '../../runtime/providers/types';
 import type { V4OutputContract } from './context';
-import { assertV4FormattingOnly, v4RoleplayFormattingIssues } from './output-format';
+import { assertV4FormattingOnly, tryV4LocalRoleplayRepair, v4RoleplayFormattingIssues } from './output-format';
 
 export function assertV4NotCancelled(signal?: AbortSignal) {
   if (signal?.aborted) throw new DOMException('Generation cancelled. No turn or composer change was committed.', 'AbortError');
@@ -52,6 +52,19 @@ export async function generateV4Output(provider: ProviderAdapter, request: Provi
   const initial = first.text;
   const truncated = result.metadata.completionStatus === 'max_tokens';
   const malformed = v4RoleplayFormattingIssues(initial).length > 0;
+  // Fix provably mechanical markup errors without another creative-model call.
+  // Persona drafts with fixed operator-authored prefixes retain their guarded path.
+  if (malformed && !truncated && !options.fixedPrefix) {
+    const locallyRepaired = tryV4LocalRoleplayRepair(initial);
+    if (locallyRepaired !== null) {
+      return {
+        result: { ...result, text: locallyRepaired },
+        text: locallyRepaired,
+        reason: 'safe local roleplay formatting',
+        attempts: 1,
+      };
+    }
+  }
   let text = initial;
   const reason = truncated ? 'hard-ceiling truncation' : malformed ? 'roleplay formatting' : null;
   if (reason) {
@@ -61,7 +74,7 @@ export async function generateV4Output(provider: ProviderAdapter, request: Provi
       '\nREPAIR OVERRIDE / ONE REMAINING ATTEMPT',
       truncated
         ? `The draft hit the hard ceiling. Regenerate a substantially shorter complete beat: aim for about ${target} tokens, not a quota. This numeric target overrides ALL original length and paragraph instructions. Preserve personality, dialogue and scene continuity. Do not continue the cut-off text, pad, recap, or start another exchange.`
-        : 'FORMAT REPAIR ONLY: preserve every ordered word, punctuation mark, Unicode character and already unambiguous action/dialogue/thought role. Change only roleplay delimiters and whitespace. Do not shorten, paraphrase, expand, or continue.',
+        : 'FORMAT REPAIR ONLY: preserve every ordered word, punctuation mark, Unicode character and already unambiguous action/dialogue/thought role. Change only roleplay delimiters and whitespace. Do not shorten, paraphrase, expand, or continue. Output only the repaired in-world prose, never an instruction or explanation about formatting.',
       options.fixedPrefix ? 'Return the full player draft, starting with the exact fixed operator-authored prefix unchanged as supplied in the original request.' : 'Return only the complete in-world response.',
       'Close every quote, action delimiter and inner-voice bracket naturally before stopping.',
       ...(!truncated ? ['DRAFT TO REPAIR:', initial] : []),

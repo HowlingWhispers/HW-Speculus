@@ -355,20 +355,36 @@ describe('V4 browser + runtime single repair ownership', () => {
     expect(requests[1].maxTokens).toBe(session.settings.maxTokens);
   });
 
-  it('format-only repair preserves words and roles, without a shorter target', async () => {
-    const { provider, requests } = gateway([{ text: '*He says "Hello."* *He waits.*' }, { text: '*He says* "Hello." *He waits.*' }]);
+  it('repairs unambiguous nested speech locally without another provider call', async () => {
+    const original = '*He says "Hello."* *He waits.*';
+    const { provider, requests } = gateway([{ text: original }]);
     const next = await generateV4Turn(fresh(), provider);
     expect(next.turns[0].reply).toBe('*He says* "Hello." *He waits.*');
-    expect(requests[1].prompt).toContain('Do not shorten');
-    expect(requests[1].prompt).toContain('DRAFT TO REPAIR:\n*He says "Hello."* *He waits.*');
-    expect(requests[1].prompt).not.toContain('aim for about');
-    expect(requests[1].maxTokens).toBe(512);
+    expect(() => assertV4FormattingOnly(original, next.turns[0].reply)).not.toThrow();
+    expect(next.turns[0].diagnostics.warnings.join(' ')).toContain('safe local roleplay formatting');
+    expect(requests).toHaveLength(1);
+  });
+
+  it('closes a clearly complete unbalanced action locally without guessing additional text', async () => {
+    const { provider, requests } = gateway([{ text: '*The keeper waits.' }]);
+    const next = await generateV4Turn(fresh(), provider);
+    expect(next.turns[0].reply).toBe('*The keeper waits.*');
+    expect(requests).toHaveLength(1);
+  });
+
+  it('never wraps naked model instructions as action narration', async () => {
+    const { provider, requests } = gateway([
+      { text: 'Do not leave dangling syntax.' },
+      { text: 'Do not leave dangling syntax.' },
+    ]);
+    await expect(generateV4Turn(fresh(), provider)).rejects.toThrow('invalid roleplay formatting');
+    expect(requests).toHaveLength(2);
   });
 
   it.each<[string, string]>([
     ['*yes* "yes" tail', '"yes" *yes* *tail*'],
     ['a*bc* tail', '"abc" *tail*'],
-    ['*He says "Hello."* *He waits.*', '*He says* "Hello." "He waits."'],
+    ['*He looks at "Hello."* *He waits.*', '*He looks at* "Hello." "He waits."'],
     ['Ｆｏｏ tail', '*Foo tail*'],
     ["Don't stop! tail", "*Don't stop. tail*"],
     ['*One.* tail', '*One.*'],
