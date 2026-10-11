@@ -176,7 +176,12 @@ export const branchSchema = z.unknown().transform((value, ctx): V4Branch => {
     const record = raw as Record<string, unknown>;
     return Object.entries(normalized).every(([key, item]) => item === undefined || (Object.hasOwn(record, key) && complete(record[key], item)));
   };
-  if (!complete(value, parsed.data)) {
+  // Older branches predate this display preference; checkpoint fields remain required.
+  const stored = value as { settings: Record<string, unknown> };
+  const compatible = Object.hasOwn(stored.settings, 'generatedTextFontSize') ? value : {
+    ...stored, settings: { ...stored.settings, generatedTextFontSize: parsed.data.settings.generatedTextFontSize },
+  };
+  if (!complete(compatible, parsed.data)) {
     ctx.addIssue({ code: 'custom', message: 'Branch authority contains missing checkpoint fields.' });
     return z.NEVER;
   }

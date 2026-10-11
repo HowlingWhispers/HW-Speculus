@@ -2,9 +2,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { V4App as AppComponent } from '../src/v4/ui/App';
 import { publicV4Package } from '../src/v4/contracts/launch';
-import { createRootBranch, type V4Branch } from '../src/v4/runtime/branches';
+import { createRootBranch, generationBranchTurn, type V4Branch } from '../src/v4/runtime/branches';
+import { MockProvider } from '../src/runtime/providers/mock';
 import { createV4Session } from '../src/v4/runtime/session';
-import { createBranchRepository } from '../src/v4/storage/branches';
+import { branchStorageKey, createBranchRepository } from '../src/v4/storage/branches';
 import { saveV4Session } from '../src/v4/storage/session';
 import { loadV4Authorization } from '../src/v4/storage/authorization';
 import { v2Package } from './v2-fixtures';
@@ -49,6 +50,32 @@ function mockGenerateResponse(text = '*She smiles.* "Durable welcome."') {
 }
 
 describe('V4 durable branch UI', () => {
+  it('restores a generated repository branch predating the font preference through a fresh launch', async () => {
+    const pkg = publicV4Package(v2Package());
+    const root = createRootBranch(createV4Session(pkg));
+    const generated = await generationBranchTurn({ ...root, draft: '*I look around.*' }, pkg, new MockProvider());
+    const branch = { ...generated, draft: 'Old repository draft' };
+    const raw: V4Branch = JSON.parse(JSON.stringify(branch));
+    Reflect.deleteProperty(raw.settings, 'generatedTextFontSize');
+    const key = branchStorageKey(branch.source, branch.storyId, branch.branchId);
+    db.stores.set('branches', new Map([[key, { branch: raw, sourceIdentity: branch.source }]]));
+    db.stores.set('active', new Map([['selection', { key, sourceIdentity: branch.source, revision: 7 }]]));
+    history.replaceState({}, '', '/v4?launch=old-branch-recovery-code');
+    const fetch = vi.fn(async () => mockLaunchResponse(pkg));
+    vi.stubGlobal('fetch', fetch);
+
+    render(<V4App />);
+    await screen.findByLabelText('Your next turn');
+    await waitFor(() => expect(screen.getByLabelText('Your next turn')).toHaveValue(branch.draft));
+    expect(screen.queryByText('Invalid V4 branch storage data.')).toBeNull();
+    expect(screen.getByRole('log', { name: 'Roleplay transcript' })).toHaveTextContent(branch.turns[0].pages[0].reply.replace(/\*/g, ''));
+    fireEvent.click(screen.getByRole('button', { name: 'Setup' }));
+    expect(screen.getByLabelText('Generated AI reply text size')).toHaveValue('20');
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const repo = createBranchRepository({ indexedDB: db.factory });
+    expect(await repo.loadActiveBranch(branch.source)).toEqual({ branch, sourceIdentity: branch.source, selectionRevision: 7 });
+  });
+
   it('identifies an IndexedDB save at the standalone root without restoring authorization', async () => {
     const { branch, repo } = await seed();
     sessionStorage.clear(); localStorage.clear();
